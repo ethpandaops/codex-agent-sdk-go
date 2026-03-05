@@ -402,6 +402,15 @@ func TestRequiresAppServerQuery(t *testing.T) {
 		{name: "fork requires app-server", options: &CodexAgentOptions{ForkSession: true}, want: true},
 		{name: "continue requires app-server", options: &CodexAgentOptions{ContinueConversation: true}, want: true},
 		{name: "output format requires app-server", options: &CodexAgentOptions{OutputFormat: map[string]any{"type": "json_schema"}}, want: true},
+		{
+			name: "sdk mcp server requires app-server",
+			options: &CodexAgentOptions{
+				MCPServers: map[string]MCPServerConfig{
+					"sdk": &MCPSdkServerConfig{Type: MCPServerTypeSDK, Name: "sdk"},
+				},
+			},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/hook"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,6 +64,24 @@ func TestSelectQueryBackend(t *testing.T) {
 				},
 			},
 			want: QueryBackendAppServer,
+		},
+		{
+			name: "SDK MCP server requires app-server",
+			options: &Options{
+				MCPServers: map[string]mcp.ServerConfig{
+					"sdk": &mcp.SdkServerConfig{Type: mcp.ServerTypeSDK, Name: "sdk"},
+				},
+			},
+			want: QueryBackendAppServer,
+		},
+		{
+			name: "non-SDK MCP server keeps exec",
+			options: &Options{
+				MCPServers: map[string]mcp.ServerConfig{
+					"stdio": &mcp.StdioServerConfig{Command: "echo"},
+				},
+			},
+			want: QueryBackendExec,
 		},
 	}
 
@@ -128,5 +147,19 @@ func TestValidateOptionsForBackend(t *testing.T) {
 		err := ValidateOptionsForBackend(opts, QueryBackendAppServer)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "only supports value \"stdio\"")
+	})
+
+	t.Run("exec backend rejects SDK MCP servers", func(t *testing.T) {
+		t.Parallel()
+
+		opts := &Options{
+			MCPServers: map[string]mcp.ServerConfig{
+				"sdk": &mcp.SdkServerConfig{Type: mcp.ServerTypeSDK, Name: "sdk"},
+			},
+		}
+
+		err := ValidateOptionsForBackend(opts, QueryBackendExec)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "MCPServers")
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	sdkerrors "github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
 )
 
 // QueryBackend describes the built-in backend selected for one-shot Query.
@@ -187,6 +188,12 @@ func SelectQueryBackend(opts *Options) QueryBackend {
 		return QueryBackendExec
 	}
 
+	// SDK MCP servers require bidirectional callbacks and cannot be serialized
+	// to exec CLI flags, so Query must run over app-server mode.
+	if hasSDKMCPServers(opts.MCPServers) {
+		return QueryBackendAppServer
+	}
+
 	enabled := EnabledOptionFields(opts)
 	for field := range enabled {
 		capability, ok := optionCapabilityByField[field]
@@ -207,6 +214,14 @@ func SelectQueryBackend(opts *Options) QueryBackend {
 func ValidateOptionsForBackend(opts *Options, backend QueryBackend) error {
 	if opts == nil {
 		return nil
+	}
+
+	if backend == QueryBackendExec && hasSDKMCPServers(opts.MCPServers) {
+		return fmt.Errorf(
+			"%w: option MCPServers (WithMCPServers) with SDK server type is unsupported on %s backend",
+			sdkerrors.ErrUnsupportedOption,
+			backend,
+		)
 	}
 
 	enabled := EnabledOptionFields(opts)
@@ -256,4 +271,22 @@ func ValidateOptionsForBackend(opts *Options, backend QueryBackend) error {
 	}
 
 	return nil
+}
+
+func hasSDKMCPServers(servers map[string]mcp.ServerConfig) bool {
+	if len(servers) == 0 {
+		return false
+	}
+
+	for _, server := range servers {
+		if server == nil {
+			continue
+		}
+
+		if server.GetType() == mcp.ServerTypeSDK {
+			return true
+		}
+	}
+
+	return false
 }
