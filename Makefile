@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: lint fmt test test-integration test-intergration clean tidy vuln modernize-check audit test/cover help
+.PHONY: lint fmt test test-integration clean tidy vuln modernize-check audit test/cover help
 
 ## lint: run golangci-lint
 lint:
@@ -16,9 +16,6 @@ test:
 ## test-integration: run integration tests
 test-integration:
 	go test -race -tags=integration -timeout=120s -v ./integration/...
-
-## test-intergration: backwards-compatible alias for misspelled target
-test-intergration: test-integration
 
 ## clean: remove build artifacts
 clean:

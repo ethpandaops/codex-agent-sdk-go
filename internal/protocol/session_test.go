@@ -224,7 +224,7 @@ func TestSession_BuildInitializePayload_IncludesAdvancedFields(t *testing.T) {
 	session := &Session{
 		log: log,
 		options: &config.Options{
-			Model:                "gpt-5",
+			Model:                "gpt-5.4",
 			Cwd:                  "/tmp/project",
 			ContinueConversation: true,
 			Resume:               "thread_abc",
@@ -246,7 +246,7 @@ func TestSession_BuildInitializePayload_IncludesAdvancedFields(t *testing.T) {
 
 	payload := session.buildInitializePayload()
 
-	require.Equal(t, "gpt-5", payload["model"])
+	require.Equal(t, "gpt-5.4", payload["model"])
 	require.Equal(t, "/tmp/project", payload["cwd"])
 	require.Equal(t, true, payload["continueConversation"])
 	require.Equal(t, "thread_abc", payload["resume"])

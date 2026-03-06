@@ -93,6 +93,11 @@ func (c *clientWrapper) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	return c.impl.ListModels(ctx)
 }
 
+// ListModelsResponse queries the CLI for the full model list payload.
+func (c *clientWrapper) ListModelsResponse(ctx context.Context) (*ModelListResponse, error) {
+	return c.impl.ListModelsResponse(ctx)
+}
+
 // RewindFiles rewinds tracked files to their state at a specific user message.
 func (c *clientWrapper) RewindFiles(ctx context.Context, userMessageID string) error {
 	return c.impl.RewindFiles(ctx, userMessageID)

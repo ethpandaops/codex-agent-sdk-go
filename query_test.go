@@ -65,7 +65,7 @@ func TestQuery_WithOptions(t *testing.T) {
 		WithModel("claude-sonnet-4-5-20250514"),
 		WithPermissionMode("acceptAll"),
 		WithEnv(map[string]string{"TEST_VAR": "test_value"}),
-		WithConfig(map[string]string{"model": "gpt-5"}),
+		WithConfig(map[string]string{"model": "gpt-5.4"}),
 		WithOutputFormat(map[string]any{
 			"type": "json_schema",
 			"schema": map[string]any{
@@ -396,7 +396,7 @@ func TestRequiresAppServerQuery(t *testing.T) {
 		want    bool
 	}{
 		{name: "default options", options: &CodexAgentOptions{}, want: false},
-		{name: "exec-compatible option stays exec", options: &CodexAgentOptions{Model: "gpt-5"}, want: false},
+		{name: "exec-compatible option stays exec", options: &CodexAgentOptions{Model: "gpt-5.4"}, want: false},
 		{name: "system prompt requires app-server", options: &CodexAgentOptions{SystemPrompt: "be concise"}, want: true},
 		{name: "resume requires app-server", options: &CodexAgentOptions{Resume: "thread_1"}, want: true},
 		{name: "fork requires app-server", options: &CodexAgentOptions{ForkSession: true}, want: true},

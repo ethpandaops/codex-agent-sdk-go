@@ -577,6 +577,16 @@ func (c *Client) GetMCPStatus(ctx context.Context) (*mcp.Status, error) {
 
 // ListModels queries the CLI for available models.
 func (c *Client) ListModels(ctx context.Context) ([]model.Info, error) {
+	resp, err := c.ListModelsResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Models, nil
+}
+
+// ListModelsResponse queries the CLI for the full model list payload.
+func (c *Client) ListModelsResponse(ctx context.Context) (*model.ListResponse, error) {
 	if !c.isConnected() {
 		return nil, errors.ErrClientNotConnected
 	}
@@ -598,7 +608,7 @@ func (c *Client) ListModels(ctx context.Context) ([]model.Info, error) {
 		return nil, fmt.Errorf("unmarshal list models: %w", err)
 	}
 
-	return listResp.Models, nil
+	return &listResp, nil
 }
 
 // GetServerInfo returns server initialization info.
