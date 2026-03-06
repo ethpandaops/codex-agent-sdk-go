@@ -44,7 +44,7 @@ func TestSelectQueryBackend(t *testing.T) {
 		want    QueryBackend
 	}{
 		{name: "default options", options: &Options{}, want: QueryBackendExec},
-		{name: "exec-compatible option keeps exec", options: &Options{Model: "o4-mini"}, want: QueryBackendExec},
+		{name: "exec-compatible option keeps exec", options: &Options{Model: "gpt-5.4"}, want: QueryBackendExec},
 		{name: "system prompt requires app-server", options: &Options{SystemPrompt: "be helpful"}, want: QueryBackendAppServer},
 		{name: "resume requires app-server", options: &Options{Resume: "thread_1"}, want: QueryBackendAppServer},
 		{
@@ -102,11 +102,11 @@ func TestValidateOptionsForBackend(t *testing.T) {
 		t.Parallel()
 
 		opts := &Options{
-			Model:        "gpt-5",
+			Model:        "gpt-5.4",
 			SystemPrompt: "be helpful",
 			Resume:       "thread_1",
 			ForkSession:  true,
-			Config:       map[string]string{"model": "gpt-5"},
+			Config:       map[string]string{"model": "gpt-5.4"},
 		}
 
 		err := ValidateOptionsForBackend(opts, QueryBackendAppServer)

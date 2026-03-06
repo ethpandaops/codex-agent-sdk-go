@@ -69,13 +69,13 @@ func TestBuildExecArgs_Basic(t *testing.T) {
 // TestBuildExecArgs_WithModel tests command building with model option.
 func TestBuildExecArgs_WithModel(t *testing.T) {
 	options := &config.Options{
-		Model: "o4-mini",
+		Model: "gpt-5.4",
 	}
 
 	args := BuildExecArgs("test", options)
 
 	require.Contains(t, args, "-m")
-	require.Contains(t, args, "o4-mini")
+	require.Contains(t, args, "gpt-5.4")
 }
 
 // TestBuildExecArgs_WithoutModel tests that no -m flag appears when model is empty.

@@ -84,16 +84,26 @@ func (m *mockTransport) SendMessage(_ context.Context, data []byte) error {
 				result = map[string]any{
 					"models": []map[string]any{
 						{
+							"id":          "gpt-5.4",
+							"model":       "gpt-5.4",
+							"displayName": "GPT-5.4",
+							"isDefault":   true,
+							"metadata": map[string]any{
+								"upgrade":                  "gpt-5.4-pro",
+								"modelContextWindow":       1050000,
+								"modelContextWindowSource": "official",
+								"maxOutputTokens":          128000,
+								"maxOutputTokensSource":    "official",
+							},
+						},
+						{
 							"id":          "o4-mini",
 							"model":       "o4-mini",
 							"displayName": "O4 Mini",
-							"isDefault":   true,
 						},
-						{
-							"id":          "o3",
-							"model":       "o3",
-							"displayName": "O3",
-						},
+					},
+					"metadata": map[string]any{
+						"source": "adapter",
 					},
 				}
 			default:
@@ -329,13 +339,39 @@ func TestClient_ListModels(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, models, 2)
 
-	assert.Equal(t, "o4-mini", models[0].ID)
-	assert.Equal(t, "o4-mini", models[0].Model)
-	assert.Equal(t, "O4 Mini", models[0].DisplayName)
+	assert.Equal(t, "gpt-5.4", models[0].ID)
+	assert.Equal(t, "gpt-5.4", models[0].Model)
+	assert.Equal(t, "GPT-5.4", models[0].DisplayName)
 	assert.True(t, models[0].IsDefault)
+	assert.Equal(t, map[string]any{
+		"upgrade":                  "gpt-5.4-pro",
+		"modelContextWindow":       float64(1050000),
+		"modelContextWindowSource": "official",
+		"maxOutputTokens":          float64(128000),
+		"maxOutputTokensSource":    "official",
+	}, models[0].Metadata)
 
-	assert.Equal(t, "o3", models[1].ID)
-	assert.Equal(t, "O3", models[1].DisplayName)
+	assert.Equal(t, "o4-mini", models[1].ID)
+	assert.Equal(t, "O4 Mini", models[1].DisplayName)
+}
+
+func TestClient_ListModelsResponse(t *testing.T) {
+	transport := newMockTransport()
+
+	client := New()
+
+	err := client.Start(context.Background(), &config.Options{
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	defer func() { require.NoError(t, client.Close()) }()
+
+	resp, err := client.ListModelsResponse(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Len(t, resp.Models, 2)
+	assert.Equal(t, map[string]any{"source": "adapter"}, resp.Metadata)
 }
 
 // TestClient_ListModels_NotConnected verifies that ListModels returns an error
@@ -346,4 +382,12 @@ func TestClient_ListModels_NotConnected(t *testing.T) {
 	models, err := client.ListModels(context.Background())
 	require.Error(t, err)
 	assert.Nil(t, models)
+}
+
+func TestClient_ListModelsResponse_NotConnected(t *testing.T) {
+	client := New()
+
+	resp, err := client.ListModelsResponse(context.Background())
+	require.Error(t, err)
+	assert.Nil(t, resp)
 }

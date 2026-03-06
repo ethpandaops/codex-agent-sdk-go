@@ -108,8 +108,12 @@ type Client interface {
 	GetMCPStatus(ctx context.Context) (*MCPStatus, error)
 
 	// ListModels queries the CLI for available models.
-	// Returns the list of models the CLI can use.
+	// Returns the complete list of models the CLI can use across all pages.
 	ListModels(ctx context.Context) ([]ModelInfo, error)
+
+	// ListModelsResponse queries the CLI for available models.
+	// Returns the complete model-list payload across all pages.
+	ListModelsResponse(ctx context.Context) (*ModelListResponse, error)
 
 	// RewindFiles rewinds tracked files to their state at a specific user message.
 	// The userMessageID should be the ID of a previous user message in the conversation.

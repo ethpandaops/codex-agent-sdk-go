@@ -3,6 +3,7 @@ package subprocess
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"maps"
 	"sync"
@@ -411,7 +412,7 @@ func TestAppServerAdapter_SetModelAndPermissionOverrides(t *testing.T) {
 	}()
 
 	sendControlRequest(t, adapter, mock, "set_model", map[string]any{
-		"model": "gpt-5",
+		"model": "gpt-5.4",
 	})
 
 	msg := receiveAdapterMessage(t, adapter)
@@ -444,7 +445,7 @@ func TestAppServerAdapter_SetModelAndPermissionOverrides(t *testing.T) {
 
 	params, ok := calls[0].Params.(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "gpt-5", params["model"])
+	require.Equal(t, "gpt-5.4", params["model"])
 	require.Equal(t, "never", params["approvalPolicy"])
 
 	sandboxPolicy, ok := params["sandboxPolicy"].(map[string]any)
@@ -506,6 +507,7 @@ func TestAppServerAdapter_ControlRequests_MCPStatusAndUnsupported(t *testing.T) 
 	t.Run("list_models", func(t *testing.T) {
 		mock := newMockAppServerRPC()
 		adapter := newTestAdapter(mock)
+		callCount := 0
 
 		defer func() {
 			close(adapter.done)
@@ -516,9 +518,16 @@ func TestAppServerAdapter_ControlRequests_MCPStatusAndUnsupported(t *testing.T) 
 		mock.sendRequestFunc = func(
 			_ context.Context,
 			method string,
-			_ any,
+			params any,
 		) (*RPCResponse, error) {
 			require.Equal(t, "model/list", method)
+			require.Equal(t, map[string]any{
+				"includeHidden": true,
+				"limit":         100,
+			}, params)
+
+			callCount++
+			require.Equal(t, 1, callCount)
 
 			return &RPCResponse{
 				JSONRPC: "2.0",
@@ -526,21 +535,22 @@ func TestAppServerAdapter_ControlRequests_MCPStatusAndUnsupported(t *testing.T) 
 				Result: json.RawMessage(`{
 					"data":[
 						{
-							"id":"o4-mini",
-							"model":"o4-mini",
-							"displayName":"O4 Mini",
-							"description":"Small fast model",
+							"id":"gpt-5.4",
+							"model":"gpt-5.4",
+							"displayName":"GPT-5.4",
+							"description":"Latest GPT-5.4 model",
 							"isDefault":true,
 							"hidden":false,
 							"defaultReasoningEffort":"medium",
 							"supportedReasoningEfforts":[{"value":"low","label":"Low"}],
 							"inputModalities":["text","image"],
-							"supportsPersonality":false
+							"supportsPersonality":false,
+							"upgrade":"gpt-5.4-pro"
 						},
 						{
-							"id":"o3",
-							"model":"o3",
-							"displayName":"O3",
+							"id":"o4-mini",
+							"model":"o4-mini",
+							"displayName":"O4 Mini",
 							"isDefault":false,
 							"hidden":true
 						}
@@ -564,11 +574,152 @@ func TestAppServerAdapter_ControlRequests_MCPStatusAndUnsupported(t *testing.T) 
 		models, ok := payload["models"].([]map[string]any)
 		require.True(t, ok)
 		require.Len(t, models, 2)
-		require.Equal(t, "o4-mini", models[0]["id"])
-		require.Equal(t, "O4 Mini", models[0]["displayName"])
+		require.Equal(t, "gpt-5.4", models[0]["id"])
+		require.Equal(t, "GPT-5.4", models[0]["displayName"])
 		require.Equal(t, true, models[0]["isDefault"])
-		require.Equal(t, "o3", models[1]["id"])
+		require.Equal(t, map[string]any{
+			"upgrade":                  "gpt-5.4-pro",
+			"modelContextWindow":       1050000,
+			"modelContextWindowSource": "official",
+			"maxOutputTokens":          128000,
+			"maxOutputTokensSource":    "official",
+		}, models[0]["metadata"])
+		require.Equal(t, "o4-mini", models[1]["id"])
 		require.Equal(t, true, models[1]["hidden"])
+		_, hasMetadata := models[1]["metadata"]
+		require.False(t, hasMetadata)
+
+		_, hasPayloadMetadata := payload["metadata"]
+		require.False(t, hasPayloadMetadata)
+	})
+
+	t.Run("list_models prefers official metadata and falls back to runtime metadata", func(t *testing.T) {
+		mock := newMockAppServerRPC()
+		adapter := newTestAdapter(mock)
+
+		defer func() {
+			close(adapter.done)
+			mock.Close()
+			adapter.wg.Wait()
+		}()
+
+		mock.sendRequestFunc = func(
+			_ context.Context,
+			method string,
+			_ any,
+		) (*RPCResponse, error) {
+			require.Equal(t, "model/list", method)
+
+			return &RPCResponse{
+				JSONRPC: "2.0",
+				ID:      1,
+				Result: json.RawMessage(`{
+					"data":[
+						{"id":"gpt-5.3-codex","model":"gpt-5.3-codex","displayName":"GPT-5.3-Codex"},
+						{"id":"gpt-5.3-codex-spark","model":"gpt-5.3-codex-spark","displayName":"GPT-5.3-Codex-Spark"}
+					]
+				}`),
+			}, nil
+		}
+
+		sendControlRequest(t, adapter, mock, "list_models", nil)
+
+		msg := receiveAdapterMessage(t, adapter)
+		resp, ok := msg["response"].(map[string]any)
+		require.True(t, ok)
+
+		payload, ok := resp["response"].(map[string]any)
+		require.True(t, ok)
+
+		models, ok := payload["models"].([]map[string]any)
+		require.True(t, ok)
+		require.Len(t, models, 2)
+		require.Equal(t, map[string]any{
+			"modelContextWindow":       400000,
+			"modelContextWindowSource": "official",
+			"maxOutputTokens":          128000,
+			"maxOutputTokensSource":    "official",
+		}, models[0]["metadata"])
+		require.Equal(t, map[string]any{
+			"modelContextWindow":       121600,
+			"modelContextWindowSource": "runtime",
+		}, models[1]["metadata"])
+	})
+
+	t.Run("list_models fetches every page internally", func(t *testing.T) {
+		mock := newMockAppServerRPC()
+		adapter := newTestAdapter(mock)
+		callCount := 0
+		errUnexpectedModelListCall := errors.New("unexpected model/list call")
+
+		defer func() {
+			close(adapter.done)
+			mock.Close()
+			adapter.wg.Wait()
+		}()
+
+		mock.sendRequestFunc = func(
+			_ context.Context,
+			method string,
+			params any,
+		) (*RPCResponse, error) {
+			require.Equal(t, "model/list", method)
+
+			callCount++
+
+			switch callCount {
+			case 1:
+				require.Equal(t, map[string]any{
+					"includeHidden": true,
+					"limit":         100,
+				}, params)
+
+				return &RPCResponse{
+					JSONRPC: "2.0",
+					ID:      1,
+					Result: json.RawMessage(`{
+						"data":[{"id":"gpt-5.3-codex","model":"gpt-5.3-codex","displayName":"GPT-5.3-Codex"}],
+						"nextCursor":"cursor_123"
+					}`),
+				}, nil
+			case 2:
+				require.Equal(t, map[string]any{
+					"includeHidden": true,
+					"limit":         100,
+					"cursor":        "cursor_123",
+				}, params)
+
+				return &RPCResponse{
+					JSONRPC: "2.0",
+					ID:      1,
+					Result: json.RawMessage(`{
+						"data":[{"id":"gpt-5.4","model":"gpt-5.4","displayName":"GPT-5.4"}]
+					}`),
+				}, nil
+			default:
+				t.Fatalf("unexpected model/list call %d", callCount)
+
+				return nil, errUnexpectedModelListCall
+			}
+		}
+
+		sendControlRequest(t, adapter, mock, "list_models", nil)
+
+		msg := receiveAdapterMessage(t, adapter)
+		resp, ok := msg["response"].(map[string]any)
+		require.True(t, ok)
+
+		payload, ok := resp["response"].(map[string]any)
+		require.True(t, ok)
+
+		models, ok := payload["models"].([]map[string]any)
+		require.True(t, ok)
+		require.Len(t, models, 2)
+		require.Equal(t, "gpt-5.3-codex", models[0]["id"])
+		require.Equal(t, "gpt-5.4", models[1]["id"])
+
+		_, hasPayloadMetadata := payload["metadata"]
+		require.False(t, hasPayloadMetadata)
 	})
 
 	t.Run("list_models with empty result", func(t *testing.T) {

@@ -135,6 +135,8 @@ if err != nil {
 |---|---|
 | `Query(ctx, prompt, opts...)` | One-shot query returning `iter.Seq2[Message, error]` |
 | `QueryStream(ctx, messages, opts...)` | Streams `StreamingMessage` input and yields `Message` output |
+| `ListModels(ctx, opts...)` | Returns the complete discovered model list across all CLI pages |
+| `ListModelsResponse(ctx, opts...)` | Returns the complete discovered model-list payload across all CLI pages |
 | `NewClient()` | Creates a stateful client for interactive sessions |
 | `WithClient(ctx, fn, opts...)` | Helper that runs `Start()` + callback + `Close()` |
 | `StatSession(ctx, sessionID, opts...)` | Read session metadata from local SQLite database |
@@ -153,6 +155,8 @@ if err != nil {
 | `SetPermissionMode(ctx, mode)` | Change permission mode during a session |
 | `SetModel(ctx, model)` | Change model during a session |
 | `GetMCPStatus(ctx)` | Fetch live MCP server connection status |
+| `ListModels(ctx)` | Fetch the complete discovered model list across all CLI pages |
+| `ListModelsResponse(ctx)` | Fetch the complete discovered model-list payload across all CLI pages |
 | `RewindFiles(ctx, userMessageID)` | Rewind tracked files to earlier turn |
 | `Close()` | Close and release resources |
 
@@ -160,6 +164,13 @@ if err != nil {
 
 - Message types: `AssistantMessage`, `UserMessage`, `SystemMessage`, `ResultMessage`, `StreamEvent`
 - Content blocks: `TextBlock`, `ThinkingBlock`, `ToolUseBlock`, `ToolResultBlock`
+
+`ListModels` returns the fully aggregated model list across all internal `model/list` pages. `ListModelsResponse` returns the same complete model set plus response metadata. Extra provider-specific `model/list` fields are preserved in `ModelInfo.Metadata`. The SDK also decorates known models when Codex does not return them directly:
+
+- `metadata.modelContextWindow`
+- `metadata.modelContextWindowSource` (`cli`, `official`, or `runtime`)
+- `metadata.maxOutputTokens`
+- `metadata.maxOutputTokensSource` (`cli` or `official`)
 
 ### Stream helpers
 
@@ -187,7 +198,7 @@ Options are backend-dependent. Unsupported combinations fail fast with `ErrUnsup
 | Option | Purpose |
 |---|---|
 | `WithLogger(logger)` | SDK logs (`*slog.Logger`) |
-| `WithModel("o4-mini")` | Model selection |
+| `WithModel("gpt-5.4")` | Model selection |
 | `WithCwd("/path")` / `WithCliPath("/path/codex")` / `WithEnv(...)` | Process/runtime setup |
 | `WithPermissionMode("acceptEdits")` / `WithSandbox("workspace-write")` | Permission/sandbox behavior |
 | `WithSystemPrompt("...")` / `WithSystemPromptPreset(...)` | System instructions |

@@ -571,7 +571,7 @@ func (a *AppServerAdapter) handleMCPStatus(ctx context.Context, requestID string
 }
 
 func (a *AppServerAdapter) handleListModels(ctx context.Context, requestID string) error {
-	resp, err := a.inner.SendRequest(ctx, "model/list", map[string]any{})
+	result, err := a.listAllModels(ctx)
 	if err != nil {
 		a.injectErrorControlResponse(requestID, fmt.Sprintf("model/list RPC: %v", err))
 
@@ -579,72 +579,11 @@ func (a *AppServerAdapter) handleListModels(ctx context.Context, requestID strin
 	}
 
 	payload := map[string]any{
-		"models": []map[string]any{},
+		"models": result.models,
 	}
 
-	if resp.Result != nil {
-		var result map[string]any
-		if unmarshalErr := json.Unmarshal(resp.Result, &result); unmarshalErr == nil {
-			if data, ok := result["data"].([]any); ok && len(data) > 0 {
-				models := make([]map[string]any, 0, len(data))
-				for _, raw := range data {
-					entry, ok := raw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					id, _ := entry["id"].(string)
-					if id == "" {
-						continue
-					}
-
-					m := map[string]any{
-						"id":                  id,
-						"supportsPersonality": false,
-					}
-
-					if v, ok := entry["model"].(string); ok {
-						m["model"] = v
-					}
-
-					if v, ok := entry["displayName"].(string); ok {
-						m["displayName"] = v
-					}
-
-					if v, ok := entry["description"].(string); ok {
-						m["description"] = v
-					}
-
-					if v, ok := entry["isDefault"].(bool); ok {
-						m["isDefault"] = v
-					}
-
-					if v, ok := entry["hidden"].(bool); ok {
-						m["hidden"] = v
-					}
-
-					if v, ok := entry["defaultReasoningEffort"].(string); ok {
-						m["defaultReasoningEffort"] = v
-					}
-
-					if v, ok := entry["supportedReasoningEfforts"].([]any); ok {
-						m["supportedReasoningEfforts"] = v
-					}
-
-					if v, ok := entry["inputModalities"].([]any); ok {
-						m["inputModalities"] = v
-					}
-
-					if v, ok := entry["supportsPersonality"].(bool); ok {
-						m["supportsPersonality"] = v
-					}
-
-					models = append(models, m)
-				}
-
-				payload["models"] = models
-			}
-		}
+	if len(result.metadata) > 0 {
+		payload["metadata"] = result.metadata
 	}
 
 	a.injectControlResponse(requestID, map[string]any{
@@ -654,6 +593,305 @@ func (a *AppServerAdapter) handleListModels(ctx context.Context, requestID strin
 	})
 
 	return nil
+}
+
+type modelListResult struct {
+	models   []map[string]any
+	metadata map[string]any
+}
+
+type modelSpec struct {
+	ContextWindow   int
+	MaxOutputTokens int
+}
+
+const (
+	modelMetadataSourceCLI      = "cli"
+	modelMetadataSourceOfficial = "official"
+	modelMetadataSourceRuntime  = "runtime"
+)
+
+var officialModelSpecs = map[string]modelSpec{
+	"gpt-5.1-codex": {
+		ContextWindow:   400000,
+		MaxOutputTokens: 128000,
+	},
+	"gpt-5.1-codex-max": {
+		ContextWindow:   400000,
+		MaxOutputTokens: 128000,
+	},
+	"gpt-5.1-codex-mini": {
+		ContextWindow:   400000,
+		MaxOutputTokens: 128000,
+	},
+	"gpt-5.2": {
+		ContextWindow:   400000,
+		MaxOutputTokens: 128000,
+	},
+	"gpt-5.2-codex": {
+		ContextWindow:   400000,
+		MaxOutputTokens: 128000,
+	},
+	"gpt-5.3-codex": {
+		ContextWindow:   400000,
+		MaxOutputTokens: 128000,
+	},
+	"gpt-5.4": {
+		ContextWindow:   1050000,
+		MaxOutputTokens: 128000,
+	},
+}
+
+var runtimeModelSpecs = map[string]modelSpec{
+	"gpt-5.1-codex-max": {
+		ContextWindow: 258400,
+	},
+	"gpt-5.1-codex-mini": {
+		ContextWindow: 258400,
+	},
+	"gpt-5.2": {
+		ContextWindow: 258400,
+	},
+	"gpt-5.2-codex": {
+		ContextWindow: 258400,
+	},
+	"gpt-5.3-codex": {
+		ContextWindow: 258400,
+	},
+	"gpt-5.3-codex-spark": {
+		ContextWindow: 121600,
+	},
+	"gpt-5.4": {
+		ContextWindow: 258400,
+	},
+}
+
+func (a *AppServerAdapter) listAllModels(ctx context.Context) (*modelListResult, error) {
+	var (
+		cursor   string
+		models   []map[string]any
+		metadata map[string]any
+	)
+
+	for {
+		params := map[string]any{
+			"includeHidden": true,
+			"limit":         100,
+		}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+
+		resp, err := a.inner.SendRequest(ctx, "model/list", params)
+		if err != nil {
+			return nil, err
+		}
+
+		pageModels, pageMetadata, nextCursor, err := parseModelListPage(resp.Result)
+		if err != nil {
+			return nil, err
+		}
+
+		models = append(models, pageModels...)
+
+		if len(pageMetadata) > 0 {
+			if metadata == nil {
+				metadata = make(map[string]any, len(pageMetadata))
+			}
+
+			for key, value := range pageMetadata {
+				metadata[key] = value
+			}
+		}
+
+		if nextCursor == "" {
+			break
+		}
+
+		cursor = nextCursor
+	}
+
+	return &modelListResult{
+		models:   models,
+		metadata: metadata,
+	}, nil
+}
+
+func parseModelListPage(raw json.RawMessage) ([]map[string]any, map[string]any, string, error) {
+	if len(raw) == 0 {
+		return nil, nil, "", nil
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, nil, "", err
+	}
+
+	var metadata map[string]any
+
+	for key, value := range result {
+		switch key {
+		case "data", "nextCursor":
+			continue
+		default:
+			if value == nil {
+				continue
+			}
+
+			if metadata == nil {
+				metadata = make(map[string]any)
+			}
+
+			metadata[key] = value
+		}
+	}
+
+	var models []map[string]any
+	if data, ok := result["data"].([]any); ok && len(data) > 0 {
+		models = make([]map[string]any, 0, len(data))
+		for _, rawEntry := range data {
+			entry, ok := rawEntry.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			model := normalizeModelEntry(entry)
+			if model == nil {
+				continue
+			}
+
+			models = append(models, model)
+		}
+	}
+
+	nextCursor, _ := result["nextCursor"].(string)
+
+	return models, metadata, nextCursor, nil
+}
+
+func normalizeModelEntry(entry map[string]any) map[string]any {
+	id, _ := entry["id"].(string)
+	if id == "" {
+		return nil
+	}
+
+	model := map[string]any{
+		"id":                  id,
+		"supportsPersonality": false,
+	}
+	metadata := make(map[string]any)
+
+	for key, value := range entry {
+		switch key {
+		case "id":
+			model["id"] = value
+		case "model":
+			if v, ok := value.(string); ok {
+				model["model"] = v
+			}
+		case "displayName":
+			if v, ok := value.(string); ok {
+				model["displayName"] = v
+			}
+		case "description":
+			if v, ok := value.(string); ok {
+				model["description"] = v
+			}
+		case "isDefault":
+			if v, ok := value.(bool); ok {
+				model["isDefault"] = v
+			}
+		case "hidden":
+			if v, ok := value.(bool); ok {
+				model["hidden"] = v
+			}
+		case "defaultReasoningEffort":
+			if v, ok := value.(string); ok {
+				model["defaultReasoningEffort"] = v
+			}
+		case "supportedReasoningEfforts":
+			if v, ok := value.([]any); ok {
+				model["supportedReasoningEfforts"] = v
+			}
+		case "inputModalities":
+			if v, ok := value.([]any); ok {
+				model["inputModalities"] = v
+			}
+		case "supportsPersonality":
+			if v, ok := value.(bool); ok {
+				model["supportsPersonality"] = v
+			}
+		default:
+			if value == nil {
+				continue
+			}
+
+			metadata[key] = value
+		}
+	}
+
+	if len(metadata) > 0 {
+		model["metadata"] = metadata
+	}
+
+	decorateModelMetadata(model)
+
+	return model
+}
+
+func decorateModelMetadata(model map[string]any) {
+	modelID, _ := model["id"].(string)
+	modelName, _ := model["model"].(string)
+
+	metadata, _ := model["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = make(map[string]any)
+	}
+
+	if _, exists := metadata["modelContextWindow"]; exists {
+		setMetadataSourceIfMissing(metadata, "modelContextWindowSource", modelMetadataSourceCLI)
+	} else {
+		if spec := lookupModelSpec(modelID, modelName, officialModelSpecs); spec.ContextWindow != 0 {
+			metadata["modelContextWindow"] = spec.ContextWindow
+			metadata["modelContextWindowSource"] = modelMetadataSourceOfficial
+		} else if spec := lookupModelSpec(modelID, modelName, runtimeModelSpecs); spec.ContextWindow != 0 {
+			metadata["modelContextWindow"] = spec.ContextWindow
+			metadata["modelContextWindowSource"] = modelMetadataSourceRuntime
+		}
+	}
+
+	if _, exists := metadata["maxOutputTokens"]; exists {
+		setMetadataSourceIfMissing(metadata, "maxOutputTokensSource", modelMetadataSourceCLI)
+	} else if spec := lookupModelSpec(modelID, modelName, officialModelSpecs); spec.MaxOutputTokens != 0 {
+		metadata["maxOutputTokens"] = spec.MaxOutputTokens
+		metadata["maxOutputTokensSource"] = modelMetadataSourceOfficial
+	}
+
+	if len(metadata) == 0 {
+		return
+	}
+
+	model["metadata"] = metadata
+}
+
+func setMetadataSourceIfMissing(metadata map[string]any, key string, value string) {
+	if _, exists := metadata[key]; exists {
+		return
+	}
+
+	metadata[key] = value
+}
+
+func lookupModelSpec(modelID string, modelName string, values map[string]modelSpec) modelSpec {
+	if v, ok := values[modelID]; ok {
+		return v
+	}
+
+	if v, ok := values[modelName]; ok {
+		return v
+	}
+
+	return modelSpec{}
 }
 
 func (a *AppServerAdapter) handleRewindFiles(requestID string) error {
