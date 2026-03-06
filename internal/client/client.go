@@ -565,9 +565,56 @@ func (c *Client) GetMCPStatus(ctx context.Context) (*mcp.Status, error) {
 
 	if session != nil {
 		for _, name := range session.GetSDKMCPServerNames() {
+			server, ok := session.GetSDKMCPServer(name)
+			if !ok {
+				continue
+			}
+
+			tools := make(map[string]mcp.Tool)
+
+			for _, rawTool := range server.ListTools() {
+				toolName, _ := rawTool["name"].(string)
+				if toolName == "" {
+					continue
+				}
+
+				tool := mcp.Tool{
+					Name:        toolName,
+					InputSchema: rawTool["inputSchema"],
+				}
+
+				if description, ok := rawTool["description"].(string); ok && description != "" {
+					tool.Description = &description
+				}
+
+				if title, ok := rawTool["title"].(string); ok && title != "" {
+					tool.Title = &title
+				}
+
+				if outputSchema, ok := rawTool["outputSchema"]; ok {
+					tool.OutputSchema = outputSchema
+				}
+
+				if annotations, ok := rawTool["annotations"].(map[string]any); ok {
+					tool.Annotations = annotations
+				}
+
+				if icons, ok := rawTool["icons"].([]any); ok {
+					tool.Icons = icons
+				}
+
+				if meta, ok := rawTool["_meta"]; ok {
+					tool.Meta = meta
+				}
+
+				tools[toolName] = tool
+			}
+
 			status.MCPServers = append(status.MCPServers, mcp.ServerStatus{
-				Name:   name,
-				Status: "connected",
+				Name:       name,
+				Status:     "connected",
+				AuthStatus: mcp.AuthStatusUnsupported,
+				Tools:      tools,
 			})
 		}
 	}

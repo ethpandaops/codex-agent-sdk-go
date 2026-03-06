@@ -32,7 +32,7 @@ const (
 	// EffortHigh uses deep thinking.
 	EffortHigh Effort = "high"
 	// EffortMax uses maximum thinking depth.
-	EffortMax Effort = "max"
+	EffortMax Effort = "xhigh"
 )
 
 // ThinkingConfig controls extended thinking behavior.
@@ -75,8 +75,8 @@ type Options struct {
 	Model string
 
 	// PermissionMode controls how permissions are handled.
-	// For Codex, maps to sandbox modes: "default" → full-auto,
-	// "acceptEdits" → workspace-write, "bypassPermissions" → danger-full-access.
+	// Supported values are "default", "acceptEdits", "plan", and
+	// "bypassPermissions".
 	PermissionMode string
 
 	// Cwd sets the working directory for the CLI process.

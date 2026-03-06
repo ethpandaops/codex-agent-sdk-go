@@ -13,6 +13,9 @@ var (
 	_ Message = (*UserMessage)(nil)
 	_ Message = (*AssistantMessage)(nil)
 	_ Message = (*SystemMessage)(nil)
+	_ Message = (*TaskStartedMessage)(nil)
+	_ Message = (*TaskCompleteMessage)(nil)
+	_ Message = (*ThreadRolledBackMessage)(nil)
 	_ Message = (*ResultMessage)(nil)
 	_ Message = (*StreamEvent)(nil)
 )
@@ -158,6 +161,33 @@ type SystemMessage struct {
 
 // MessageType implements the Message interface.
 func (m *SystemMessage) MessageType() string { return "system" }
+
+// TaskStartedMessage is emitted when a Codex turn starts.
+//
+//nolint:tagliatelle // Codex uses snake_case
+type TaskStartedMessage struct {
+	SystemMessage
+	TurnID                string `json:"turn_id"`
+	CollaborationModeKind string `json:"collaboration_mode_kind,omitempty"`
+	ModelContextWindow    *int64 `json:"model_context_window,omitempty"`
+}
+
+// TaskCompleteMessage is emitted when a Codex turn completes.
+//
+//nolint:tagliatelle // Codex uses snake_case
+type TaskCompleteMessage struct {
+	SystemMessage
+	TurnID           string  `json:"turn_id"`
+	LastAgentMessage *string `json:"last_agent_message,omitempty"`
+}
+
+// ThreadRolledBackMessage is emitted when a thread is rolled back.
+//
+//nolint:tagliatelle // Codex uses snake_case
+type ThreadRolledBackMessage struct {
+	SystemMessage
+	NumTurns int `json:"num_turns"`
+}
 
 // ResultMessage represents the final result of a query.
 //

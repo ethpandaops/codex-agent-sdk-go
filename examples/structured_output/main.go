@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	codexsdk "github.com/ethpandaops/codex-agent-sdk-go"
@@ -30,29 +29,21 @@ type BookReview struct {
 	} `json:"review"`
 }
 
-func createSchemaFile(schema map[string]any) (string, error) {
-	f, err := os.CreateTemp("", "codex-structured-output-*.json")
+func marshalSchema(schema map[string]any) (string, error) {
+	data, err := json.Marshal(schema)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
 
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-
-	if err := enc.Encode(schema); err != nil {
-		return "", err
-	}
-
-	return f.Name(), nil
+	return string(data), nil
 }
 
 // getStructuredOutput runs a query and returns structured JSON.
-func getStructuredOutput(ctx context.Context, prompt string, schemaFile string, systemPrompt string) (json.RawMessage, error) {
+func getStructuredOutput(ctx context.Context, prompt string, schema string, systemPrompt string) (json.RawMessage, error) {
 	var lastAssistantText string
 
 	for msg, err := range codexsdk.Query(ctx, prompt,
-		codexsdk.WithOutputSchema(schemaFile),
+		codexsdk.WithOutputSchema(schema),
 		codexsdk.WithSystemPrompt(systemPrompt),
 	) {
 		if err != nil {
@@ -111,18 +102,17 @@ func simpleStructuredOutput() {
 		"required": []string{"name", "age", "hobbies"},
 	}
 
-	schemaFile, err := createSchemaFile(schema)
+	schemaJSON, err := marshalSchema(schema)
 	if err != nil {
-		fmt.Printf("Error creating schema file: %v\n", err)
+		fmt.Printf("Error marshaling schema: %v\n", err)
 
 		return
 	}
-	defer os.Remove(schemaFile)
 
 	output, err := getStructuredOutput(
 		ctx,
 		"Invent a fictional person with a name, age, and exactly 3 hobbies.",
-		schemaFile,
+		schemaJSON,
 		"You are a creative writer. Respond only with valid JSON matching the schema.",
 	)
 	if err != nil {
@@ -175,18 +165,17 @@ func nestedStructuredOutput() {
 		"required": []string{"title", "author", "rating", "review"},
 	}
 
-	schemaFile, err := createSchemaFile(schema)
+	schemaJSON, err := marshalSchema(schema)
 	if err != nil {
-		fmt.Printf("Error creating schema file: %v\n", err)
+		fmt.Printf("Error marshaling schema: %v\n", err)
 
 		return
 	}
-	defer os.Remove(schemaFile)
 
 	output, err := getStructuredOutput(
 		ctx,
 		"Write a brief review of '1984' by George Orwell. Include title, author, a rating from 1-5, and a review with a short summary, 2 pros, 2 cons, and target audience.",
-		schemaFile,
+		schemaJSON,
 		"You are a book critic. Respond only with valid JSON matching the schema.",
 	)
 	if err != nil {

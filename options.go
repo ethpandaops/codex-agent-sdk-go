@@ -58,8 +58,8 @@ func WithModel(model string) Option {
 }
 
 // WithPermissionMode controls how permissions are handled.
-// For Codex, maps to sandbox modes: "default" -> full-auto,
-// "acceptEdits" -> workspace-write, "bypassPermissions" -> danger-full-access.
+// Supported values are "default", "acceptEdits", "plan", and
+// "bypassPermissions".
 func WithPermissionMode(mode string) Option {
 	return func(o *CodexAgentOptions) {
 		o.PermissionMode = mode

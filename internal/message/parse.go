@@ -244,15 +244,9 @@ func parseCodexTurnCompleted(data map[string]any) (*ResultMessage, error) {
 
 	if v, ok := data["is_error"].(bool); ok {
 		result.IsError = v
-	} else if v, ok := data["isError"].(bool); ok {
-		result.IsError = v
 	}
 
 	if sid, ok := data["session_id"].(string); ok {
-		result.SessionID = sid
-	} else if sid, ok := data["thread_id"].(string); ok {
-		result.SessionID = sid
-	} else if sid, ok := data["threadId"].(string); ok {
 		result.SessionID = sid
 	}
 
@@ -266,25 +260,17 @@ func parseCodexTurnCompleted(data map[string]any) (*ResultMessage, error) {
 
 		if v, ok := usageData["input_tokens"].(float64); ok {
 			usage.InputTokens = int(v)
-		} else if v, ok := usageData["inputTokens"].(float64); ok {
-			usage.InputTokens = int(v)
 		}
 
 		if v, ok := usageData["output_tokens"].(float64); ok {
-			usage.OutputTokens = int(v)
-		} else if v, ok := usageData["outputTokens"].(float64); ok {
 			usage.OutputTokens = int(v)
 		}
 
 		if v, ok := usageData["cached_input_tokens"].(float64); ok {
 			usage.CachedInputTokens = int(v)
-		} else if v, ok := usageData["cachedInputTokens"].(float64); ok {
-			usage.CachedInputTokens = int(v)
 		}
 
 		if v, ok := usageData["reasoning_output_tokens"].(float64); ok {
-			usage.ReasoningOutputTokens = int(v)
-		} else if v, ok := usageData["reasoningOutputTokens"].(float64); ok {
 			usage.ReasoningOutputTokens = int(v)
 		}
 
@@ -382,8 +368,104 @@ func parseAssistantMessage(data map[string]any) (*AssistantMessage, error) {
 	return msg, nil
 }
 
+func systemMessageData(data map[string]any) map[string]any {
+	if msgData, ok := data["data"].(map[string]any); ok {
+		return msgData
+	}
+
+	msgData := make(map[string]any, len(data))
+	for k, v := range data {
+		if k != "type" && k != "subtype" {
+			msgData[k] = v
+		}
+	}
+
+	return msgData
+}
+
+func requiredSystemMessageData(data map[string]any) (map[string]any, error) {
+	msgData, ok := data["data"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("system message: missing or invalid %q field", "data")
+	}
+
+	return msgData, nil
+}
+
+func requiredStringField(data map[string]any, key string) (string, error) {
+	value, ok := data[key].(string)
+	if !ok {
+		return "", fmt.Errorf("system message: missing or invalid %q field", key)
+	}
+
+	return value, nil
+}
+
+func parseTaskStartedSystemMessage(data map[string]any, system SystemMessage) (Message, error) {
+	turnID, err := requiredStringField(data, "turn_id")
+	if err != nil {
+		return nil, err
+	}
+
+	msg := &TaskStartedMessage{
+		SystemMessage: system,
+		TurnID:        turnID,
+	}
+
+	if mode, ok := data["collaboration_mode_kind"].(string); ok {
+		msg.CollaborationModeKind = mode
+	}
+
+	switch v := data["model_context_window"].(type) {
+	case float64:
+		modelContextWindow := int64(v)
+		msg.ModelContextWindow = &modelContextWindow
+	case int64:
+		modelContextWindow := v
+		msg.ModelContextWindow = &modelContextWindow
+	}
+
+	return msg, nil
+}
+
+func parseTaskCompleteSystemMessage(data map[string]any, system SystemMessage) (Message, error) {
+	turnID, err := requiredStringField(data, "turn_id")
+	if err != nil {
+		return nil, err
+	}
+
+	msg := &TaskCompleteMessage{
+		SystemMessage: system,
+		TurnID:        turnID,
+	}
+
+	if lastAgentMessage, ok := data["last_agent_message"].(string); ok {
+		msg.LastAgentMessage = &lastAgentMessage
+	}
+
+	return msg, nil
+}
+
+func parseThreadRolledBackSystemMessage(data map[string]any, system SystemMessage) (Message, error) {
+	var numTurns int
+
+	switch v := data["num_turns"].(type) {
+	case float64:
+		numTurns = int(v)
+	case int:
+		numTurns = v
+	default:
+		return nil, fmt.Errorf("system message: missing or invalid %q field", "num_turns")
+	}
+
+	return &ThreadRolledBackMessage{
+		SystemMessage: system,
+		NumTurns:      numTurns,
+	}, nil
+}
+
 // parseSystemMessage parses a SystemMessage from raw JSON.
-func parseSystemMessage(data map[string]any) (*SystemMessage, error) {
+func parseSystemMessage(data map[string]any) (Message, error) {
 	msg := &SystemMessage{Type: "system"}
 
 	subtype, ok := data["subtype"].(string)
@@ -393,19 +475,54 @@ func parseSystemMessage(data map[string]any) (*SystemMessage, error) {
 
 	msg.Subtype = subtype
 
-	if msgData, ok := data["data"].(map[string]any); ok {
-		msg.Data = msgData
-	} else {
-		msg.Data = make(map[string]any, len(data))
-
-		for k, v := range data {
-			if k != "type" && k != "subtype" {
-				msg.Data[k] = v
-			}
+	switch subtype {
+	case "task.started":
+		msgData, err := requiredSystemMessageData(data)
+		if err != nil {
+			return nil, err
 		}
-	}
 
-	return msg, nil
+		msg.Data = msgData
+
+		typed, err := parseTaskStartedSystemMessage(msg.Data, *msg)
+		if err != nil {
+			return nil, err
+		}
+
+		return typed, nil
+	case "task.complete":
+		msgData, err := requiredSystemMessageData(data)
+		if err != nil {
+			return nil, err
+		}
+
+		msg.Data = msgData
+
+		typed, err := parseTaskCompleteSystemMessage(msg.Data, *msg)
+		if err != nil {
+			return nil, err
+		}
+
+		return typed, nil
+	case "thread.rolled_back":
+		msgData, err := requiredSystemMessageData(data)
+		if err != nil {
+			return nil, err
+		}
+
+		msg.Data = msgData
+
+		typed, err := parseThreadRolledBackSystemMessage(msg.Data, *msg)
+		if err != nil {
+			return nil, err
+		}
+
+		return typed, nil
+	default:
+		msg.Data = systemMessageData(data)
+
+		return msg, nil
+	}
 }
 
 // parseStreamEvent parses a StreamEvent from raw JSON.

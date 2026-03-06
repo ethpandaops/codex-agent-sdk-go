@@ -19,7 +19,7 @@ func main() {
 
 	for msg, err := range codexsdk.Query(ctx, "Say 'Hello, streaming world!' one word at a time.",
 		codexsdk.WithIncludePartialMessages(true),
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Query failed: %v\n", err)

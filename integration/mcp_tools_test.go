@@ -211,3 +211,58 @@ func TestSDKTools_ReturnValue(t *testing.T) {
 	require.True(t, toolExecuted, "Tool should have been executed")
 	require.True(t, mentionedNumber, "Agent should mention the returned number (42)")
 }
+
+func TestMCPStatus_IncludesSDKServerMetadata(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	echoTool := codexsdk.NewSdkMcpTool(
+		"test_echo",
+		"Echoes text back",
+		codexsdk.SimpleSchema(map[string]string{"message": "string"}),
+		func(_ context.Context, req *codexsdk.CallToolRequest) (*codexsdk.CallToolResult, error) {
+			args, err := codexsdk.ParseArguments(req)
+			if err != nil {
+				return codexsdk.ErrorResult(err.Error()), nil
+			}
+
+			msg, _ := args["message"].(string)
+
+			return codexsdk.TextResult(msg), nil
+		},
+	)
+
+	server := codexsdk.CreateSdkMcpServer("sdk", "1.0.0", echoTool)
+	client := codexsdk.NewClient()
+	defer client.Close()
+
+	err := client.Start(ctx,
+		codexsdk.WithPermissionMode("bypassPermissions"),
+		codexsdk.WithMCPServers(map[string]codexsdk.MCPServerConfig{
+			"sdk": server,
+		}),
+	)
+	if err != nil {
+		skipIfCLINotInstalled(t, err)
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	status, err := client.GetMCPStatus(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, status)
+
+	var sdkStatus *codexsdk.MCPServerStatus
+
+	for i := range status.MCPServers {
+		if status.MCPServers[i].Name == "sdk" {
+			sdkStatus = &status.MCPServers[i]
+			break
+		}
+	}
+
+	require.NotNil(t, sdkStatus, "sdk MCP server should be listed")
+	require.Equal(t, "connected", sdkStatus.Status)
+	require.Equal(t, codexsdk.MCPAuthStatusUnsupported, sdkStatus.AuthStatus)
+	require.Contains(t, sdkStatus.Tools, "test_echo")
+	require.Equal(t, "test_echo", sdkStatus.Tools["test_echo"].Name)
+}

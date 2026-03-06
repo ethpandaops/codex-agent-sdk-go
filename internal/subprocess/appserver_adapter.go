@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"os"
 	"strings"
 	"sync"
 
@@ -303,15 +302,21 @@ func buildInitializeRPC(
 	}
 
 	if approvalRaw, ok := requestData["approvalPolicy"].(string); ok && approvalRaw != "" {
-		if approvalPolicy, err := normalizeApprovalPolicy(approvalRaw); err == nil {
-			params["approvalPolicy"] = approvalPolicy
+		approvalPolicy, err := normalizeApprovalPolicy(approvalRaw)
+		if err != nil {
+			return "", nil, initializeTurnOverrides{}, err
 		}
+
+		params["approvalPolicy"] = approvalPolicy
 	}
 
 	if sandboxRaw, ok := requestData["sandbox"].(string); ok && sandboxRaw != "" {
-		if sandboxMode, err := normalizeSandboxMode(sandboxRaw); err == nil {
-			params["sandbox"] = sandboxMode
+		sandboxMode, err := normalizeSandboxMode(sandboxRaw)
+		if err != nil {
+			return "", nil, initializeTurnOverrides{}, err
 		}
+
+		params["sandbox"] = sandboxMode
 	}
 
 	if effortRaw, ok := requestData["reasoningEffort"].(string); ok && effortRaw != "" {
@@ -342,8 +347,7 @@ func buildInitializeRPC(
 		}
 	}
 
-	// Pass through compatibility initialize fields. Codex app-server ignores
-	// unknown fields and may use some of these in newer versions.
+	// Pass through initialize fields that are part of the current SDK surface.
 	passthroughKeys := []string{
 		"allowedTools",
 		"disallowedTools",
@@ -550,10 +554,25 @@ func (a *AppServerAdapter) handleMCPStatus(ctx context.Context, requestID string
 						continue
 					}
 
-					servers = append(servers, map[string]any{
-						"name":   name,
-						"status": mapMCPAuthStatus(authStatus),
-					})
+					server := map[string]any{
+						"name":       name,
+						"status":     mapMCPAuthStatus(authStatus),
+						"authStatus": authStatus,
+					}
+
+					if tools, ok := entry["tools"]; ok {
+						server["tools"] = tools
+					}
+
+					if resources, ok := entry["resources"]; ok {
+						server["resources"] = resources
+					}
+
+					if resourceTemplates, ok := entry["resourceTemplates"]; ok {
+						server["resourceTemplates"] = resourceTemplates
+					}
+
+					servers = append(servers, server)
 				}
 
 				payload["mcpServers"] = servers
@@ -908,7 +927,7 @@ func (a *AppServerAdapter) handleRewindFiles(requestID string) error {
 
 func mapMCPAuthStatus(authStatus string) string {
 	switch authStatus {
-	case "oauth", "bearerToken":
+	case "oAuth", "bearerToken":
 		return "connected"
 	case "notLoggedIn":
 		return "not_logged_in"
@@ -1474,17 +1493,13 @@ func permissionModeToTurnOverrides(mode string) (string, map[string]any, error) 
 		approvalNever     = "never"
 	)
 
-	const approvalUntrusted = "untrusted"
-
 	switch mode {
 	case "", "default", permissionModePlan:
 		return approvalOnRequest, nil, nil
 	case "acceptEdits":
 		return approvalOnRequest, map[string]any{"type": "workspaceWrite"}, nil
-	case "bypassPermissions", "acceptAll":
+	case "bypassPermissions":
 		return approvalNever, map[string]any{"type": "dangerFullAccess"}, nil
-	case "askAll":
-		return approvalUntrusted, nil, nil
 	default:
 		return "", nil, fmt.Errorf("%w: permission mode %q", sdkerrors.ErrUnsupportedOption, mode)
 	}
@@ -1492,11 +1507,11 @@ func permissionModeToTurnOverrides(mode string) (string, map[string]any, error) 
 
 func normalizeApprovalPolicy(value string) (string, error) {
 	switch value {
-	case "on-request", "onRequest":
+	case "on-request":
 		return "on-request", nil
-	case "on-failure", "onFailure":
+	case "on-failure":
 		return "on-failure", nil
-	case "untrusted", "unlessTrusted":
+	case "untrusted":
 		return "untrusted", nil
 	case "never":
 		return "never", nil
@@ -1511,12 +1526,6 @@ func normalizeSandboxMode(value string) (string, error) {
 	switch value {
 	case "read-only", "workspace-write", "danger-full-access":
 		return value, nil
-	case "readOnly":
-		return "read-only", nil
-	case "workspaceWrite":
-		return "workspace-write", nil
-	case "dangerFullAccess":
-		return "danger-full-access", nil
 	case "":
 		return "", nil
 	default:
@@ -1528,8 +1537,6 @@ func normalizeEffort(value string) (string, error) {
 	switch value {
 	case "none", "minimal", "low", "medium", "high", "xhigh":
 		return value, nil
-	case "max":
-		return "xhigh", nil
 	default:
 		return "", fmt.Errorf("%w: reasoningEffort %q", sdkerrors.ErrUnsupportedOption, value)
 	}
@@ -1545,28 +1552,16 @@ func normalizeOutputSchema(value any) (any, error) {
 			return nil, nil //nolint:nilnil // empty schema string is treated as unset.
 		}
 
-		// Support passing raw JSON schema.
 		var parsed any
-		if json.Unmarshal([]byte(s), &parsed) == nil {
-			return parsed, nil
+		if err := json.Unmarshal([]byte(s), &parsed); err != nil {
+			return nil, fmt.Errorf(
+				"%w: outputSchema must be valid JSON schema: %v",
+				sdkerrors.ErrUnsupportedOption,
+				err,
+			)
 		}
 
-		// Support CLI-style file path schema input.
-		if data, err := os.ReadFile(s); err == nil {
-			if err := json.Unmarshal(data, &parsed); err != nil {
-				return nil, fmt.Errorf(
-					"%w: outputSchema file %q does not contain valid JSON schema: %v",
-					sdkerrors.ErrUnsupportedOption,
-					s,
-					err,
-				)
-			}
-
-			return parsed, nil
-		}
-
-		// Fall back to raw string for forward compatibility.
-		return v, nil
+		return parsed, nil
 	default:
 		return cloneAnyValue(value), nil
 	}
@@ -1640,9 +1635,80 @@ var codexEventDuplicates = map[string]bool{
 var codexEventSubtypes = map[string]string{
 	"codex/event/task_started":         "task.started",
 	"codex/event/task_complete":        "task.complete",
+	"codex/event/thread_rolled_back":   "thread.rolled_back",
 	"codex/event/token_count":          "token.count",
 	"codex/event/mcp_startup_update":   "mcp.startup_update",
 	"codex/event/mcp_startup_complete": "mcp.startup_complete",
+}
+
+func (a *AppServerAdapter) normalizeTypedCodexEventData(
+	method string,
+	params map[string]any,
+) map[string]any {
+	data := cloneAnyMap(params)
+
+	switch method {
+	case "codex/event/task_started":
+		turnID, _ := data["turn_id"].(string)
+		if turnID == "" {
+			turnID, _ = data["turnId"].(string)
+		}
+
+		if turnID != "" {
+			data["turn_id"] = turnID
+			delete(data, "turnId")
+
+			a.mu.Lock()
+			a.turnID = turnID
+			a.mu.Unlock()
+		} else {
+			a.mu.Lock()
+			if a.turnID != "" {
+				data["turn_id"] = a.turnID
+			}
+			a.mu.Unlock()
+		}
+
+		if mode, ok := data["collaborationModeKind"]; ok {
+			data["collaboration_mode_kind"] = mode
+			delete(data, "collaborationModeKind")
+		}
+
+		if window, ok := data["modelContextWindow"]; ok {
+			data["model_context_window"] = window
+			delete(data, "modelContextWindow")
+		}
+
+	case "codex/event/task_complete":
+		turnID, _ := data["turn_id"].(string)
+		if turnID == "" {
+			turnID, _ = data["turnId"].(string)
+		}
+
+		if turnID != "" {
+			data["turn_id"] = turnID
+			delete(data, "turnId")
+		} else {
+			a.mu.Lock()
+			if a.turnID != "" {
+				data["turn_id"] = a.turnID
+			}
+			a.mu.Unlock()
+		}
+
+		if lastAgentMessage, ok := data["lastAgentMessage"]; ok {
+			data["last_agent_message"] = lastAgentMessage
+			delete(data, "lastAgentMessage")
+		}
+
+	case "codex/event/thread_rolled_back":
+		if numTurns, ok := data["numTurns"]; ok {
+			data["num_turns"] = numTurns
+			delete(data, "numTurns")
+		}
+	}
+
+	return data
 }
 
 // translateCodexEvent handles codex/event/* notifications. Duplicates of
@@ -1664,7 +1730,7 @@ func (a *AppServerAdapter) translateCodexEvent(
 		return map[string]any{
 			"type":    "system",
 			"subtype": subtype,
-			"data":    params,
+			"data":    a.normalizeTypedCodexEventData(method, params),
 		}
 	}
 
@@ -1742,22 +1808,11 @@ func (a *AppServerAdapter) injectErrorControlResponse(requestID string, errMsg s
 }
 
 // extractThreadID extracts the thread ID from a thread/start response.
-// The ID is nested at result.thread.id.
 func extractThreadID(result map[string]any) string {
-	// Try nested thread.id first (actual app-server format).
 	if thread, ok := result["thread"].(map[string]any); ok {
 		if id, ok := thread["id"].(string); ok {
 			return id
 		}
-	}
-
-	// Fallback: try top-level threadId or thread_id.
-	if id, ok := result["threadId"].(string); ok {
-		return id
-	}
-
-	if id, ok := result["thread_id"].(string); ok {
-		return id
 	}
 
 	return ""

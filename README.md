@@ -140,6 +140,8 @@ if err != nil {
 | `NewClient()` | Creates a stateful client for interactive sessions |
 | `WithClient(ctx, fn, opts...)` | Helper that runs `Start()` + callback + `Close()` |
 | `StatSession(ctx, sessionID, opts...)` | Read session metadata from local SQLite database |
+| `ListSessions(ctx, opts...)` | List persisted local sessions from the Codex state database |
+| `GetSessionMessages(ctx, sessionID, opts...)` | Read parsed persisted rollout messages, including task lifecycle events |
 
 ### `Client` methods
 
@@ -162,8 +164,10 @@ if err != nil {
 
 ### Message and content types
 
-- Message types: `AssistantMessage`, `UserMessage`, `SystemMessage`, `ResultMessage`, `StreamEvent`
+- Message types: `AssistantMessage`, `UserMessage`, `SystemMessage`, `TaskStartedMessage`, `TaskCompleteMessage`, `ThreadRolledBackMessage`, `ResultMessage`, `StreamEvent`
 - Content blocks: `TextBlock`, `ThinkingBlock`, `ToolUseBlock`, `ToolResultBlock`
+
+`GetSessionMessages` returns the typed persisted rollout events as recorded on disk. Task lifecycle records remain `TaskStartedMessage` and `TaskCompleteMessage`; they are not converted into `ResultMessage`.
 
 `ListModels` returns the fully aggregated model list across all internal `model/list` pages. `ListModelsResponse` returns the same complete model set plus response metadata. Extra provider-specific `model/list` fields are preserved in `ModelInfo.Metadata`. The SDK also decorates known models when Codex does not return them directly:
 
@@ -257,6 +261,24 @@ if err != nil {
 	log.Fatal(err)
 }
 fmt.Printf("Session: %s (tokens: %d)\n", stat.Title, stat.TokensUsed)
+```
+
+List sessions or read persisted rollout messages:
+
+```go
+sessions, err := codexsdk.ListSessions(ctx,
+	codexsdk.WithCodexHome("/custom/.codex"), // optional
+	codexsdk.WithCwd("/home/user/project"),   // optional: filter by project
+)
+if err != nil {
+	log.Fatal(err)
+}
+
+messages, err := codexsdk.GetSessionMessages(ctx, sessions[0].SessionID)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Printf("Loaded %d messages from persisted rollout\n", len(messages))
 ```
 
 `StatSession` reads from the Codex CLI's local SQLite database (`~/.codex/state_5.sqlite`).

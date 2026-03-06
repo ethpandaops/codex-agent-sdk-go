@@ -199,7 +199,7 @@ func sendControlRequest(
 			return &RPCResponse{
 				JSONRPC: "2.0",
 				ID:      1,
-				Result:  json.RawMessage(`{"threadId":"t1","turnId":"turn1"}`),
+				Result:  json.RawMessage(`{"thread":{"id":"t1"},"turnId":"turn1"}`),
 			}, nil
 		}
 	}
@@ -419,7 +419,7 @@ func TestAppServerAdapter_SetModelAndPermissionOverrides(t *testing.T) {
 	require.Equal(t, "control_response", msg["type"])
 
 	sendControlRequest(t, adapter, mock, "set_permission_mode", map[string]any{
-		"mode": "acceptAll",
+		"mode": "bypassPermissions",
 	})
 
 	msg = receiveAdapterMessage(t, adapter)
@@ -476,8 +476,14 @@ func TestAppServerAdapter_ControlRequests_MCPStatusAndUnsupported(t *testing.T) 
 				ID:      1,
 				Result: json.RawMessage(`{
 					"data":[
-						{"name":"calc","authStatus":"oauth"},
-						{"name":"search","authStatus":"notLoggedIn"}
+						{
+							"name":"calc",
+							"authStatus":"oAuth",
+							"tools":{"sum":{"name":"sum","inputSchema":{"type":"object"}}},
+							"resources":[{"name":"calc.md","uri":"file:///calc.md"}],
+							"resourceTemplates":[{"name":"repo","uriTemplate":"repo://{path}"}]
+						},
+						{"name":"search","authStatus":"notLoggedIn","tools":{},"resources":[],"resourceTemplates":[]}
 					],
 					"nextCursor":null
 				}`),
@@ -501,6 +507,10 @@ func TestAppServerAdapter_ControlRequests_MCPStatusAndUnsupported(t *testing.T) 
 		require.Len(t, servers, 2)
 		require.Equal(t, "calc", servers[0]["name"])
 		require.Equal(t, "connected", servers[0]["status"])
+		require.Equal(t, "oAuth", servers[0]["authStatus"])
+		require.NotNil(t, servers[0]["tools"])
+		require.NotNil(t, servers[0]["resources"])
+		require.NotNil(t, servers[0]["resourceTemplates"])
 		require.Equal(t, "not_logged_in", servers[1]["status"])
 	})
 
@@ -542,7 +552,7 @@ func TestAppServerAdapter_ControlRequests_MCPStatusAndUnsupported(t *testing.T) 
 							"isDefault":true,
 							"hidden":false,
 							"defaultReasoningEffort":"medium",
-							"supportedReasoningEfforts":[{"value":"low","label":"Low"}],
+							"supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Low"}],
 							"inputModalities":["text","image"],
 							"supportsPersonality":false,
 							"upgrade":"gpt-5.4-pro"
@@ -1022,7 +1032,7 @@ func TestAppServerAdapter_InitializeTurnOverrides(t *testing.T) {
 			return &RPCResponse{
 				JSONRPC: "2.0",
 				ID:      1,
-				Result:  json.RawMessage(`{"threadId":"thread_1"}`),
+				Result:  json.RawMessage(`{"thread":{"id":"thread_1"}}`),
 			}, nil
 		case 2:
 			require.Equal(t, "turn/start", method)
@@ -1648,14 +1658,72 @@ func TestAppServerAdapter_CodexEvent_Duplicates(t *testing.T) {
 func TestAppServerAdapter_CodexEvent_Unique(t *testing.T) {
 	tests := []struct {
 		method          string
+		params          string
 		expectedSubtype string
+		expectedData    map[string]any
 	}{
-		{"codex/event/task_started", "task.started"},
-		{"codex/event/task_complete", "task.complete"},
-		{"codex/event/token_count", "token.count"},
-		{"codex/event/mcp_startup_update", "mcp.startup_update"},
-		{"codex/event/mcp_startup_complete", "mcp.startup_complete"},
-		{"codex/event/some_future_event", "codex.event.some_future_event"},
+		{
+			method:          "codex/event/task_started",
+			params:          `{"turnId":"turn_123","collaborationModeKind":"plan","modelContextWindow":256000,"info":"test"}`,
+			expectedSubtype: "task.started",
+			expectedData: map[string]any{
+				"turn_id":                 "turn_123",
+				"collaboration_mode_kind": "plan",
+				"model_context_window":    float64(256000),
+				"info":                    "test",
+			},
+		},
+		{
+			method:          "codex/event/task_complete",
+			params:          `{"turnId":"turn_123","lastAgentMessage":"done","info":"test"}`,
+			expectedSubtype: "task.complete",
+			expectedData: map[string]any{
+				"turn_id":            "turn_123",
+				"last_agent_message": "done",
+				"info":               "test",
+			},
+		},
+		{
+			method:          "codex/event/thread_rolled_back",
+			params:          `{"numTurns":2,"info":"test"}`,
+			expectedSubtype: "thread.rolled_back",
+			expectedData: map[string]any{
+				"num_turns": float64(2),
+				"info":      "test",
+			},
+		},
+		{
+			method:          "codex/event/token_count",
+			params:          `{"info":"test"}`,
+			expectedSubtype: "token.count",
+			expectedData: map[string]any{
+				"info": "test",
+			},
+		},
+		{
+			method:          "codex/event/mcp_startup_update",
+			params:          `{"info":"test"}`,
+			expectedSubtype: "mcp.startup_update",
+			expectedData: map[string]any{
+				"info": "test",
+			},
+		},
+		{
+			method:          "codex/event/mcp_startup_complete",
+			params:          `{"info":"test"}`,
+			expectedSubtype: "mcp.startup_complete",
+			expectedData: map[string]any{
+				"info": "test",
+			},
+		},
+		{
+			method:          "codex/event/some_future_event",
+			params:          `{"info":"test"}`,
+			expectedSubtype: "codex.event.some_future_event",
+			expectedData: map[string]any{
+				"info": "test",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -1672,7 +1740,7 @@ func TestAppServerAdapter_CodexEvent_Unique(t *testing.T) {
 			mock.notifyCh <- &RPCNotification{
 				JSONRPC: "2.0",
 				Method:  tc.method,
-				Params:  json.RawMessage(`{"info":"test"}`),
+				Params:  json.RawMessage(tc.params),
 			}
 
 			select {
@@ -1682,7 +1750,7 @@ func TestAppServerAdapter_CodexEvent_Unique(t *testing.T) {
 
 				data, ok := msg["data"].(map[string]any)
 				require.True(t, ok)
-				require.Equal(t, "test", data["info"])
+				require.Equal(t, tc.expectedData, data)
 			case <-time.After(time.Second):
 				t.Fatalf("expected system message for %s", tc.method)
 			}

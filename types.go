@@ -135,6 +135,15 @@ const (
 // SystemMessage represents a system message.
 type SystemMessage = message.SystemMessage
 
+// TaskStartedMessage is emitted when a Codex turn starts.
+type TaskStartedMessage = message.TaskStartedMessage
+
+// TaskCompleteMessage is emitted when a Codex turn completes.
+type TaskCompleteMessage = message.TaskCompleteMessage
+
+// ThreadRolledBackMessage is emitted when a thread rollback event is observed.
+type ThreadRolledBackMessage = message.ThreadRolledBackMessage
+
 // ResultMessage represents the final result of a query.
 type ResultMessage = message.ResultMessage
 
@@ -417,6 +426,29 @@ type ModelListResponse = model.ListResponse
 
 // MCPServerStatus represents the connection status of a single MCP server.
 type MCPServerStatus = mcp.ServerStatus
+
+// MCPAuthStatus represents the authentication state of an MCP server.
+type MCPAuthStatus = mcp.AuthStatus
+
+const (
+	// MCPAuthStatusUnsupported means the server does not use authentication.
+	MCPAuthStatusUnsupported = mcp.AuthStatusUnsupported
+	// MCPAuthStatusNotLoggedIn means the server requires login before use.
+	MCPAuthStatusNotLoggedIn = mcp.AuthStatusNotLoggedIn
+	// MCPAuthStatusBearerToken means the server is authenticated with a bearer token.
+	MCPAuthStatusBearerToken = mcp.AuthStatusBearerToken
+	// MCPAuthStatusOAuth means the server is authenticated with OAuth.
+	MCPAuthStatusOAuth = mcp.AuthStatusOAuth
+)
+
+// MCPTool describes an MCP tool exposed by a server.
+type MCPTool = mcp.Tool
+
+// MCPResource describes a concrete MCP resource.
+type MCPResource = mcp.Resource
+
+// MCPResourceTemplate describes a parameterized MCP resource.
+type MCPResourceTemplate = mcp.ResourceTemplate
 
 // MCPStatus represents the connection status of all configured MCP servers.
 type MCPStatus = mcp.Status

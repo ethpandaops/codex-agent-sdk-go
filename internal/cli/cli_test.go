@@ -143,12 +143,6 @@ func TestBuildExecArgs_WithPermissionModeMapping(t *testing.T) {
 			wantFlag:       true,
 		},
 		{
-			name:           "acceptAll maps to danger-full-access",
-			permissionMode: "acceptAll",
-			wantSandbox:    "danger-full-access",
-			wantFlag:       true,
-		},
-		{
 			name:           "default maps to empty",
 			permissionMode: "default",
 			wantFlag:       false,
@@ -701,7 +695,6 @@ func TestMapPermissionToSandbox(t *testing.T) {
 		{name: "empty", input: "", expected: ""},
 		{name: "acceptEdits", input: "acceptEdits", expected: "workspace-write"},
 		{name: "bypassPermissions", input: "bypassPermissions", expected: "danger-full-access"},
-		{name: "acceptAll", input: "acceptAll", expected: "danger-full-access"},
 		{name: "unknown", input: "unknown", expected: ""},
 		{name: "plan mode", input: "plan", expected: ""},
 		{name: "random string", input: "randomString", expected: ""},

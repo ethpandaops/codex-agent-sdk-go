@@ -18,7 +18,7 @@ func TestStderrCallback_ReceivesOutput(t *testing.T) {
 	var stderrLines []string
 
 	for _, err := range codexsdk.Query(ctx, "Say 'hello'",
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithStderr(func(line string) {
 			stderrLines = append(stderrLines, line)
 		}),
@@ -41,7 +41,7 @@ func TestStderrCallback_CapturesDebugInfo(t *testing.T) {
 	var stderrLines []string
 
 	for _, err := range codexsdk.Query(ctx, "Say 'debug test'",
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithStderr(func(line string) {
 			stderrLines = append(stderrLines, line)
 		}),
