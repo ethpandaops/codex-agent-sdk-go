@@ -21,9 +21,9 @@ func TestStdioServerConfig_GetType(t *testing.T) {
 	t.Run("uses explicit type", func(t *testing.T) {
 		t.Parallel()
 
-		typ := ServerTypeSDK
+		serverType := ServerTypeSDK
 		cfg := &StdioServerConfig{
-			Type: &typ,
+			Type: &serverType,
 		}
 		require.Equal(t, ServerTypeSDK, cfg.GetType())
 	})

@@ -344,12 +344,12 @@ func TestAppServerAdapter_InitializeResumeAndFork(t *testing.T) {
 			return &RPCResponse{
 				JSONRPC: "2.0",
 				ID:      1,
-				Result:  json.RawMessage(`{"thread":{"id":"thr_resume"}}`),
+				Result:  json.RawMessage(`{"thread":{"id":"thread_resume"}}`),
 			}, nil
 		}
 
 		sendControlRequest(t, adapter, mock, "initialize", map[string]any{
-			"resume": "thr_existing",
+			"resume": "thread_existing",
 		})
 
 		calls := mock.getSentRequests()
@@ -358,7 +358,7 @@ func TestAppServerAdapter_InitializeResumeAndFork(t *testing.T) {
 
 		params, ok := calls[0].Params.(map[string]any)
 		require.True(t, ok)
-		require.Equal(t, "thr_existing", params["threadId"])
+		require.Equal(t, "thread_existing", params["threadId"])
 
 		msg := receiveAdapterMessage(t, adapter)
 		require.Equal(t, "control_response", msg["type"])
@@ -382,12 +382,12 @@ func TestAppServerAdapter_InitializeResumeAndFork(t *testing.T) {
 			return &RPCResponse{
 				JSONRPC: "2.0",
 				ID:      1,
-				Result:  json.RawMessage(`{"thread":{"id":"thr_forked"}}`),
+				Result:  json.RawMessage(`{"thread":{"id":"thread_forked"}}`),
 			}, nil
 		}
 
 		sendControlRequest(t, adapter, mock, "initialize", map[string]any{
-			"resume":      "thr_existing",
+			"resume":      "thread_existing",
 			"forkSession": true,
 		})
 
@@ -397,7 +397,7 @@ func TestAppServerAdapter_InitializeResumeAndFork(t *testing.T) {
 
 		params, ok := calls[0].Params.(map[string]any)
 		require.True(t, ok)
-		require.Equal(t, "thr_existing", params["threadId"])
+		require.Equal(t, "thread_existing", params["threadId"])
 	})
 }
 
@@ -1022,7 +1022,7 @@ func TestAppServerAdapter_InitializeTurnOverrides(t *testing.T) {
 			return &RPCResponse{
 				JSONRPC: "2.0",
 				ID:      1,
-				Result:  json.RawMessage(`{"threadId":"thr_1"}`),
+				Result:  json.RawMessage(`{"threadId":"thread_1"}`),
 			}, nil
 		case 2:
 			require.Equal(t, "turn/start", method)
@@ -1720,7 +1720,7 @@ func TestAppServerAdapter_DeltaEmission_WhenEnabled(t *testing.T) {
 	mock := newMockAppServerRPC()
 	adapter := newTestAdapter(mock)
 	adapter.includePartialMessages = true
-	adapter.threadID = "thr_test"
+	adapter.threadID = "thread_test"
 
 	defer func() {
 		close(adapter.done)
@@ -1738,7 +1738,7 @@ func TestAppServerAdapter_DeltaEmission_WhenEnabled(t *testing.T) {
 	case msg := <-adapter.messages:
 		require.Equal(t, "stream_event", msg["type"])
 		require.Equal(t, "item_2", msg["uuid"])
-		require.Equal(t, "thr_test", msg["session_id"])
+		require.Equal(t, "thread_test", msg["session_id"])
 
 		event, ok := msg["event"].(map[string]any)
 		require.True(t, ok)
