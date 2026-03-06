@@ -248,3 +248,71 @@ func TestParseCodexFileChangeKindObject(t *testing.T) {
 	require.Equal(t, "Write", toolUse.Name)
 	require.Equal(t, "hello.txt", toolUse.Input["file_path"])
 }
+
+func TestParseTypedSystemMessages(t *testing.T) {
+	logger := slog.Default()
+
+	t.Run("task.started", func(t *testing.T) {
+		msg, err := Parse(logger, map[string]any{
+			"type":    "system",
+			"subtype": "task.started",
+			"data": map[string]any{
+				"turn_id":                 "turn_123",
+				"collaboration_mode_kind": "plan",
+				"model_context_window":    float64(256000),
+			},
+		})
+		require.NoError(t, err)
+
+		taskMsg, ok := msg.(*TaskStartedMessage)
+		require.True(t, ok, "expected *TaskStartedMessage")
+		require.Equal(t, "turn_123", taskMsg.TurnID)
+		require.Equal(t, "plan", taskMsg.CollaborationModeKind)
+		require.NotNil(t, taskMsg.ModelContextWindow)
+		require.Equal(t, int64(256000), *taskMsg.ModelContextWindow)
+	})
+
+	t.Run("task.complete", func(t *testing.T) {
+		msg, err := Parse(logger, map[string]any{
+			"type":    "system",
+			"subtype": "task.complete",
+			"data": map[string]any{
+				"turn_id":            "turn_456",
+				"last_agent_message": "done",
+			},
+		})
+		require.NoError(t, err)
+
+		taskMsg, ok := msg.(*TaskCompleteMessage)
+		require.True(t, ok, "expected *TaskCompleteMessage")
+		require.Equal(t, "turn_456", taskMsg.TurnID)
+		require.NotNil(t, taskMsg.LastAgentMessage)
+		require.Equal(t, "done", *taskMsg.LastAgentMessage)
+	})
+
+	t.Run("thread.rolled_back", func(t *testing.T) {
+		msg, err := Parse(logger, map[string]any{
+			"type":    "system",
+			"subtype": "thread.rolled_back",
+			"data": map[string]any{
+				"num_turns": float64(2),
+			},
+		})
+		require.NoError(t, err)
+
+		rollbackMsg, ok := msg.(*ThreadRolledBackMessage)
+		require.True(t, ok, "expected *ThreadRolledBackMessage")
+		require.Equal(t, 2, rollbackMsg.NumTurns)
+	})
+
+	t.Run("task.complete requires canonical data envelope", func(t *testing.T) {
+		_, err := Parse(logger, map[string]any{
+			"type":               "system",
+			"subtype":            "task.complete",
+			"turn_id":            "turn_456",
+			"last_agent_message": "done",
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `"data"`)
+	})
+}

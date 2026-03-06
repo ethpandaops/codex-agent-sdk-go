@@ -63,7 +63,7 @@ func TestQuery_WithOptions(t *testing.T) {
 	for _, err := range Query(ctx, "test",
 		WithSystemPrompt("You are a helpful assistant."),
 		WithModel("claude-sonnet-4-5-20250514"),
-		WithPermissionMode("acceptAll"),
+		WithPermissionMode("bypassPermissions"),
 		WithEnv(map[string]string{"TEST_VAR": "test_value"}),
 		WithConfig(map[string]string{"model": "gpt-5.4"}),
 		WithOutputFormat(map[string]any{
@@ -106,7 +106,7 @@ func TestQuery_WithCwd(t *testing.T) {
 
 	for _, err := range Query(ctx, "test",
 		WithCwd(absPath),
-		WithPermissionMode("acceptAll"),
+		WithPermissionMode("bypassPermissions"),
 	) {
 		// Either succeeds or returns CLINotFoundError or ProcessError (CLI issues)
 		_, isCLINotFound := errors.AsType[*CLINotFoundError](err)
@@ -126,7 +126,7 @@ func TestQuery_WithEnv(t *testing.T) {
 	defer cancel()
 
 	for _, err := range Query(ctx, "test",
-		WithPermissionMode("acceptAll"),
+		WithPermissionMode("bypassPermissions"),
 		WithEnv(map[string]string{
 			"CLAUDE_SDK_TEST_VAR": "test_value_123",
 			"ANOTHER_VAR":         "another_value",
@@ -155,7 +155,7 @@ func TestQuery_WithSystemPromptPreset(t *testing.T) {
 			Preset: "claude_code",
 			Append: new("\nAdditional instructions."),
 		}),
-		WithPermissionMode("acceptAll"),
+		WithPermissionMode("bypassPermissions"),
 	) {
 		// Either succeeds or returns CLINotFoundError or ProcessError (CLI issues)
 		_, isCLINotFound := errors.AsType[*CLINotFoundError](err)
@@ -187,7 +187,7 @@ func TestQuery_WithOutputFormat(t *testing.T) {
 				"required": []string{"answer"},
 			},
 		}),
-		WithPermissionMode("acceptAll"),
+		WithPermissionMode("bypassPermissions"),
 	) {
 		// Either succeeds or returns CLINotFoundError or ProcessError (CLI issues)
 		_, isCLINotFound := errors.AsType[*CLINotFoundError](err)
@@ -208,7 +208,7 @@ func TestQuery_WithResume(t *testing.T) {
 
 	for _, err := range Query(ctx, "test",
 		WithResume("nonexistent-session-id"),
-		WithPermissionMode("acceptAll"),
+		WithPermissionMode("bypassPermissions"),
 	) {
 		// May fail due to invalid session, but should not be unexpected error type
 		_, isCLINotFound := errors.AsType[*CLINotFoundError](err)
@@ -231,7 +231,7 @@ func TestQuery_WithExtraArgs(t *testing.T) {
 		WithExtraArgs(map[string]*string{
 			"verbose": new(""), // Boolean flag with empty value
 		}),
-		WithPermissionMode("acceptAll"),
+		WithPermissionMode("bypassPermissions"),
 	) {
 		// Either succeeds or returns CLINotFoundError or ProcessError (CLI issues)
 		_, isCLINotFound := errors.AsType[*CLINotFoundError](err)
@@ -261,7 +261,7 @@ func TestQuery_CanUseToolWithPermissionPromptToolName(t *testing.T) {
 			return &PermissionResultAllow{Behavior: "allow"}, nil
 		}),
 		WithPermissionPromptToolName("custom"),
-		WithPermissionMode("acceptAll"),
+		WithPermissionMode("bypassPermissions"),
 	) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "can_use_tool callback cannot be used with permission_prompt_tool_name")
@@ -282,7 +282,7 @@ func TestQuery_CanUseToolAutoConfiguresPermissionPrompt(t *testing.T) {
 		) (PermissionResult, error) {
 			return &PermissionResultAllow{Behavior: "allow"}, nil
 		},
-		PermissionMode: "acceptAll",
+		PermissionMode: "bypassPermissions",
 	}
 
 	// Call validateAndConfigureOptions directly to test the auto-configuration
@@ -312,7 +312,7 @@ func TestQueryStream_CanUseToolWithPermissionPromptToolName(t *testing.T) {
 			return &PermissionResultAllow{Behavior: "allow"}, nil
 		}),
 		WithPermissionPromptToolName("custom"),
-		WithPermissionMode("acceptAll"),
+		WithPermissionMode("bypassPermissions"),
 	) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "can_use_tool callback cannot be used with permission_prompt_tool_name")

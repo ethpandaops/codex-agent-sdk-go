@@ -22,7 +22,7 @@ func TestAgentsAndSettings_AgentDefinition(t *testing.T) {
 	receivedResponse := false
 
 	for msg, err := range codexsdk.Query(ctx, "Say 'hello'",
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
 		if err != nil {
 			skipIfCLINotInstalled(t, err)
@@ -49,7 +49,7 @@ func TestAgentsAndSettings_SettingSources(t *testing.T) {
 	receivedResult := false
 
 	for msg, err := range codexsdk.Query(ctx, "What is 2+2? Reply with just the number.",
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
 		if err != nil {
 			skipIfCLINotInstalled(t, err)
@@ -73,7 +73,7 @@ func TestAgentsAndSettings_NoSettingSources(t *testing.T) {
 	receivedResult := false
 
 	for msg, err := range codexsdk.Query(ctx, "Say 'isolated'",
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
 		if err != nil {
 			skipIfCLINotInstalled(t, err)
@@ -128,7 +128,7 @@ You are a simple test agent. When asked a question, provide a brief, helpful ans
 
 	for msg, err := range codexsdk.Query(ctx, "Say hello in exactly 3 words",
 		codexsdk.WithCwd(tmpDir),
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
 		if err != nil {
 			skipIfCLINotInstalled(t, err)

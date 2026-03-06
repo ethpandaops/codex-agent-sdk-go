@@ -196,6 +196,62 @@ func forkSessionExample() {
 	fmt.Println()
 }
 
+// inspectPersistedSessionExample demonstrates reading persisted session data
+// from the local Codex database and rollout file after a live session.
+func inspectPersistedSessionExample() {
+	fmt.Println("=== Persisted Session Inspection Example ===")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Printf("Getwd failed: %v\n", err)
+
+		return
+	}
+
+	client := codexsdk.NewClient()
+
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "failed to close client: %v\n", closeErr)
+		}
+	}()
+
+	if startErr := client.Start(ctx, codexsdk.WithCwd(cwd)); startErr != nil {
+		fmt.Printf("Start failed: %v\n", startErr)
+
+		return
+	}
+
+	result := queryAndDisplay(ctx, client, "Reply with the single word persisted.")
+	if result == nil || result.SessionID == "" {
+		fmt.Println("No session ID returned, cannot inspect persisted history")
+
+		return
+	}
+
+	sessions, err := codexsdk.ListSessions(ctx, codexsdk.WithCwd(cwd))
+	if err != nil {
+		fmt.Printf("ListSessions failed: %v\n", err)
+
+		return
+	}
+
+	fmt.Printf("Found %d persisted sessions for %s\n", len(sessions), cwd)
+
+	messages, err := codexsdk.GetSessionMessages(ctx, result.SessionID, codexsdk.WithCwd(cwd))
+	if err != nil {
+		fmt.Printf("GetSessionMessages failed: %v\n", err)
+
+		return
+	}
+
+	fmt.Printf("Loaded %d persisted messages for session %s\n", len(messages), result.SessionID)
+	fmt.Println()
+}
+
 func main() {
 	fmt.Println("Session Examples")
 	fmt.Println()
@@ -203,4 +259,5 @@ func main() {
 	continueConversationExample()
 	resumeSessionExample()
 	forkSessionExample()
+	inspectPersistedSessionExample()
 }

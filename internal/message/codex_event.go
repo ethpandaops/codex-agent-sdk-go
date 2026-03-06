@@ -112,9 +112,7 @@ type FileChange struct {
 	Kind string `json:"kind"`
 }
 
-// UnmarshalJSON supports both legacy and newer app-server shapes for
-// file-change kind. Some runtimes send a plain string ("create"), while
-// newer payloads may send an object (for example {"type":"create"}).
+// UnmarshalJSON accepts the current file-change kind shape.
 func (f *FileChange) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Path string `json:"path"`
@@ -127,33 +125,19 @@ func (f *FileChange) UnmarshalJSON(data []byte) error {
 
 	f.Path = raw.Path
 
-	switch k := raw.Kind.(type) {
-	case nil:
-		f.Kind = ""
-	case string:
-		f.Kind = k
-	case map[string]any:
-		switch {
-		case asString(k["type"]) != "":
-			f.Kind = asString(k["type"])
-		case asString(k["kind"]) != "":
-			f.Kind = asString(k["kind"])
-		case asString(k["action"]) != "":
-			f.Kind = asString(k["action"])
-		default:
-			f.Kind = "unknown"
-		}
-	default:
-		f.Kind = fmt.Sprint(k)
+	kind, ok := raw.Kind.(map[string]any)
+	if !ok {
+		return fmt.Errorf("file change: missing or invalid kind object")
 	}
 
+	kindType, ok := kind["type"].(string)
+	if !ok || kindType == "" {
+		return fmt.Errorf("file change: missing or invalid kind type")
+	}
+
+	f.Kind = kindType
+
 	return nil
-}
-
-func asString(v any) string {
-	s, _ := v.(string)
-
-	return s
 }
 
 // TodoItem represents an item in a todo list.

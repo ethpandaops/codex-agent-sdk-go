@@ -20,7 +20,7 @@ func TestPartialMessages_DisabledByDefault(t *testing.T) {
 	var streamEventCount int
 
 	for msg, err := range codexsdk.Query(ctx, "Say 'hello'",
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
 		if err != nil {
 			skipIfCLINotInstalled(t, err)

@@ -69,6 +69,28 @@ func main() {
 	fmt.Println("MCP Server Status:")
 
 	for _, server := range status.MCPServers {
-		fmt.Printf("  %s: %s\n", server.Name, server.Status)
+		fmt.Printf("  %s: %s", server.Name, server.Status)
+
+		if server.AuthStatus != "" {
+			fmt.Printf(" (auth=%s)", server.AuthStatus)
+		}
+
+		fmt.Println()
+
+		if len(server.Tools) > 0 {
+			fmt.Println("    tools:")
+
+			for name := range server.Tools {
+				fmt.Printf("      - %s\n", name)
+			}
+		}
+
+		if len(server.Resources) > 0 || len(server.ResourceTemplates) > 0 {
+			fmt.Printf(
+				"    resources=%d resourceTemplates=%d\n",
+				len(server.Resources),
+				len(server.ResourceTemplates),
+			)
+		}
 	}
 }

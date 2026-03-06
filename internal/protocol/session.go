@@ -345,7 +345,7 @@ func mapPermissionToSandbox(permMode string) string {
 	switch permMode {
 	case "acceptEdits":
 		return "workspace-write"
-	case "bypassPermissions", "acceptAll":
+	case "bypassPermissions":
 		return "danger-full-access"
 	default:
 		return ""
@@ -354,10 +354,8 @@ func mapPermissionToSandbox(permMode string) string {
 
 func mapPermissionToApprovalPolicy(permMode string) string {
 	switch permMode {
-	case "bypassPermissions", "acceptAll":
+	case "bypassPermissions":
 		return "never"
-	case "askAll":
-		return "untrusted"
 	case "default", "acceptEdits", "plan", "":
 		return "on-request"
 	default:
@@ -412,6 +410,13 @@ func (s *Session) GetSDKMCPServerNames() []string {
 	}
 
 	return names
+}
+
+// GetSDKMCPServer returns a registered SDK MCP server by name.
+func (s *Session) GetSDKMCPServer(name string) (mcp.ServerInstance, bool) {
+	server, ok := s.sdkMcpServers[name]
+
+	return server, ok
 }
 
 // HandleDynamicToolCall handles item/tool/call requests from the CLI for
@@ -695,7 +700,7 @@ func (s *Session) HandleCanUseTool(
 	toolName, _ := req.Request["tool_name"].(string)
 	input, _ := req.Request["input"].(map[string]any)
 
-	// Compatibility path for newer app-server approval requests.
+	// Normalize command approval requests into the public tool callback shape.
 	if toolName == "" {
 		if command, ok := req.Request["command"].(string); ok && command != "" {
 			toolName = "Bash"

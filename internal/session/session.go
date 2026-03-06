@@ -11,6 +11,7 @@ import (
 	"time"
 
 	sdkerrors "github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
+	_ "modernc.org/sqlite"
 )
 
 // databaseFile is the name of the Codex state database.
@@ -47,6 +48,10 @@ type ThreadRow struct {
 	MemoryMode       string
 }
 
+type scanner interface {
+	Scan(dest ...any) error
+}
+
 // DefaultCodexHome returns the default Codex home directory (~/.codex).
 func DefaultCodexHome() (string, error) {
 	home, err := os.UserHomeDir()
@@ -60,6 +65,40 @@ func DefaultCodexHome() (string, error) {
 // DatabasePath returns the full path to the Codex state database.
 func DatabasePath(codexHome string) string {
 	return filepath.Join(codexHome, databaseFile)
+}
+
+func scanThreadRow(row scanner) (*ThreadRow, error) {
+	var t ThreadRow
+
+	var (
+		createdAtUnix, updatedAtUnix int64
+		archivedInt                  int64
+		archivedAtUnix               *int64
+	)
+
+	err := row.Scan(
+		&t.ID, &t.RolloutPath, &createdAtUnix, &updatedAtUnix,
+		&t.Title, &t.Source, &t.ModelProvider, &t.Cwd,
+		&t.SandboxPolicy, &t.ApprovalMode, &t.TokensUsed,
+		&archivedInt, &archivedAtUnix,
+		&t.GitSHA, &t.GitBranch, &t.GitOriginURL,
+		&t.CLIVersion, &t.FirstUserMessage, &t.AgentNickname,
+		&t.AgentRole, &t.MemoryMode,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	t.CreatedAt = time.Unix(createdAtUnix, 0).UTC()
+	t.UpdatedAt = time.Unix(updatedAtUnix, 0).UTC()
+	t.Archived = archivedInt != 0
+
+	if archivedAtUnix != nil {
+		at := time.Unix(*archivedAtUnix, 0).UTC()
+		t.ArchivedAt = &at
+	}
+
+	return &t, nil
 }
 
 // LookupThread queries the Codex threads table for a session by ID.
@@ -109,23 +148,7 @@ func LookupThread(
 
 	row := db.QueryRowContext(ctx, query, args...)
 
-	var t ThreadRow
-
-	var (
-		createdAtUnix, updatedAtUnix int64
-		archivedInt                  int64
-		archivedAtUnix               *int64
-	)
-
-	err = row.Scan(
-		&t.ID, &t.RolloutPath, &createdAtUnix, &updatedAtUnix,
-		&t.Title, &t.Source, &t.ModelProvider, &t.Cwd,
-		&t.SandboxPolicy, &t.ApprovalMode, &t.TokensUsed,
-		&archivedInt, &archivedAtUnix,
-		&t.GitSHA, &t.GitBranch, &t.GitOriginURL,
-		&t.CLIVersion, &t.FirstUserMessage, &t.AgentNickname,
-		&t.AgentRole, &t.MemoryMode,
-	)
+	t, err := scanThreadRow(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf(
@@ -136,14 +159,67 @@ func LookupThread(
 		return nil, fmt.Errorf("querying thread: %w", err)
 	}
 
-	t.CreatedAt = time.Unix(createdAtUnix, 0).UTC()
-	t.UpdatedAt = time.Unix(updatedAtUnix, 0).UTC()
-	t.Archived = archivedInt != 0
+	return t, nil
+}
 
-	if archivedAtUnix != nil {
-		at := time.Unix(*archivedAtUnix, 0).UTC()
-		t.ArchivedAt = &at
+// ListThreads returns all known threads, newest first.
+// When projectPath is non-empty, results are filtered by exact cwd match.
+func ListThreads(ctx context.Context, dbPath string, projectPath string) ([]ThreadRow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
-	return &t, nil
+	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+
+	dsn := fmt.Sprintf("file:%s?mode=ro&_busy_timeout=5000", dbPath)
+
+	db, err := sql.Open(sqliteDriverName, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	query := `SELECT
+		id, rollout_path, created_at, updated_at, title, source,
+		model_provider, cwd, sandbox_policy, approval_mode,
+		tokens_used, archived, archived_at,
+		git_sha, git_branch, git_origin_url,
+		cli_version, first_user_message, agent_nickname,
+		agent_role, memory_mode
+	FROM threads`
+
+	var args []any
+
+	if projectPath != "" {
+		query += " WHERE cwd = ?"
+
+		args = append(args, projectPath)
+	}
+
+	query += " ORDER BY updated_at DESC, created_at DESC"
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying threads: %w", err)
+	}
+	defer rows.Close()
+
+	threads := make([]ThreadRow, 0, 16)
+
+	for rows.Next() {
+		row, err := scanThreadRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning thread row: %w", err)
+		}
+
+		threads = append(threads, *row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating thread rows: %w", err)
+	}
+
+	return threads, nil
 }

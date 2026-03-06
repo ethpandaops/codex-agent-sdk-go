@@ -11,6 +11,49 @@ import (
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/session"
 )
 
+func resolveCodexHome(options *CodexAgentOptions) (string, error) {
+	codexHome := options.CodexHome
+	if codexHome != "" {
+		return codexHome, nil
+	}
+
+	return session.DefaultCodexHome()
+}
+
+func buildSessionStat(row *session.ThreadRow) *SessionStat {
+	return &SessionStat{
+		SessionID:        row.ID,
+		CreatedAt:        row.CreatedAt,
+		UpdatedAt:        row.UpdatedAt,
+		Title:            row.Title,
+		Source:           row.Source,
+		ModelProvider:    row.ModelProvider,
+		Cwd:              row.Cwd,
+		SandboxPolicy:    row.SandboxPolicy,
+		ApprovalMode:     row.ApprovalMode,
+		TokensUsed:       row.TokensUsed,
+		Archived:         row.Archived,
+		ArchivedAt:       row.ArchivedAt,
+		RolloutPath:      row.RolloutPath,
+		GitSHA:           row.GitSHA,
+		GitBranch:        row.GitBranch,
+		GitOriginURL:     row.GitOriginURL,
+		CLIVersion:       row.CLIVersion,
+		FirstUserMessage: row.FirstUserMessage,
+		AgentNickname:    row.AgentNickname,
+		AgentRole:        row.AgentRole,
+		MemoryMode:       row.MemoryMode,
+	}
+}
+
+func applyRolloutFileStat(stat *SessionStat) {
+	fi, err := os.Stat(stat.RolloutPath)
+	if err == nil {
+		stat.SizeBytes = fi.Size()
+		stat.LastModified = fi.ModTime()
+	}
+}
+
 // SessionStat contains metadata about a Codex CLI session read from the
 // local SQLite database (~/.codex/state_5.sqlite).
 type SessionStat struct {
@@ -106,14 +149,9 @@ func StatSession(
 
 	o := applyAgentOptions(opts)
 
-	codexHome := o.CodexHome
-	if codexHome == "" {
-		var err error
-
-		codexHome, err = session.DefaultCodexHome()
-		if err != nil {
-			return nil, fmt.Errorf("resolving codex home: %w", err)
-		}
+	codexHome, err := resolveCodexHome(o)
+	if err != nil {
+		return nil, fmt.Errorf("resolving codex home: %w", err)
 	}
 
 	dbPath := session.DatabasePath(codexHome)
@@ -123,36 +161,8 @@ func StatSession(
 		return nil, err
 	}
 
-	stat := &SessionStat{
-		SessionID:        row.ID,
-		CreatedAt:        row.CreatedAt,
-		UpdatedAt:        row.UpdatedAt,
-		Title:            row.Title,
-		Source:           row.Source,
-		ModelProvider:    row.ModelProvider,
-		Cwd:              row.Cwd,
-		SandboxPolicy:    row.SandboxPolicy,
-		ApprovalMode:     row.ApprovalMode,
-		TokensUsed:       row.TokensUsed,
-		Archived:         row.Archived,
-		ArchivedAt:       row.ArchivedAt,
-		RolloutPath:      row.RolloutPath,
-		GitSHA:           row.GitSHA,
-		GitBranch:        row.GitBranch,
-		GitOriginURL:     row.GitOriginURL,
-		CLIVersion:       row.CLIVersion,
-		FirstUserMessage: row.FirstUserMessage,
-		AgentNickname:    row.AgentNickname,
-		AgentRole:        row.AgentRole,
-		MemoryMode:       row.MemoryMode,
-	}
-
-	// Stat the rollout file for size and modification time.
-	fi, err := os.Stat(row.RolloutPath)
-	if err == nil {
-		stat.SizeBytes = fi.Size()
-		stat.LastModified = fi.ModTime()
-	}
+	stat := buildSessionStat(row)
+	applyRolloutFileStat(stat)
 
 	return stat, nil
 }

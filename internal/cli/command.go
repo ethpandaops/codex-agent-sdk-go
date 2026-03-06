@@ -202,7 +202,7 @@ func mapPermissionToSandbox(permMode string) string {
 		return ""
 	case "acceptEdits":
 		return "workspace-write"
-	case "bypassPermissions", "acceptAll":
+	case "bypassPermissions":
 		return "danger-full-access"
 	default:
 		return ""

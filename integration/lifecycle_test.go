@@ -22,7 +22,7 @@ func TestQuery_CloseMidStream(t *testing.T) {
 	client := codexsdk.NewClient()
 
 	err := client.Start(ctx,
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 	)
 	if err != nil {
 		skipIfCLINotInstalled(t, err)
@@ -89,7 +89,7 @@ func TestClient_ContextCancelDuringQuery(t *testing.T) {
 	defer client.Close()
 
 	err := client.Start(ctx,
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 	)
 	if err != nil {
 		skipIfCLINotInstalled(t, err)
@@ -150,7 +150,7 @@ func TestClient_RapidCloseReopen(t *testing.T) {
 			client := codexsdk.NewClient()
 
 			err := client.Start(ctx,
-				codexsdk.WithPermissionMode("acceptAll"),
+				codexsdk.WithPermissionMode("bypassPermissions"),
 			)
 			if err != nil {
 				skipIfCLINotInstalled(t, err)

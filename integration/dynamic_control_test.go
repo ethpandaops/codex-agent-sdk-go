@@ -28,7 +28,7 @@ func TestDynamicControl_SetPermissionMode(t *testing.T) {
 		t.Fatalf("Connect failed: %v", err)
 	}
 
-	err = client.SetPermissionMode(ctx, "acceptAll")
+	err = client.SetPermissionMode(ctx, "bypassPermissions")
 	require.NoError(t, err, "SetPermissionMode should succeed")
 
 	err = client.Query(ctx, "Say 'permission changed'")
@@ -52,7 +52,7 @@ func TestDynamicControl_SetModel(t *testing.T) {
 	defer client.Close()
 
 	err := client.Start(ctx,
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 	)
 	if err != nil {
 		skipIfCLINotInstalled(t, err)
@@ -83,7 +83,7 @@ func TestDynamicControl_Interrupt(t *testing.T) {
 	defer client.Close()
 
 	err := client.Start(ctx,
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 	)
 	if err != nil {
 		skipIfCLINotInstalled(t, err)

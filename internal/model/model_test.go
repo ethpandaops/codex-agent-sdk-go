@@ -74,10 +74,10 @@ func TestInfo_JSONFields(t *testing.T) {
 	assert.Equal(t, map[string]any{"upgrade": "gpt-5.4-pro"}, info.Metadata)
 }
 
-func TestReasoningEffortOption_UnmarshalLegacyFields(t *testing.T) {
+func TestReasoningEffortOption_UnmarshalCurrentFields(t *testing.T) {
 	t.Parallel()
 
-	raw := `{"value":"medium","label":"Medium effort"}`
+	raw := `{"reasoningEffort":"medium","description":"Medium effort"}`
 
 	var option ReasoningEffortOption
 

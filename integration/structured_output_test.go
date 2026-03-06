@@ -20,7 +20,7 @@ func TestStructuredOutput_JSONSchema(t *testing.T) {
 	var receivedResponse bool
 
 	for msg, err := range codexsdk.Query(ctx, "What is 2+2? Provide structured output.",
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithOutputFormat(map[string]any{
 			"type": "json_schema",
 			"schema": map[string]any{
@@ -75,7 +75,7 @@ func TestStructuredOutput_RequiredFields(t *testing.T) {
 
 	for msg, err := range codexsdk.Query(ctx,
 		"Generate a fictional person with a name and age in structured format.",
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithOutputFormat(map[string]any{
 			"type": "json_schema",
 			"schema": map[string]any{
@@ -128,7 +128,7 @@ func TestStructuredOutput_WithEnum(t *testing.T) {
 
 	for msg, err := range codexsdk.Query(ctx,
 		"Pick a random color and intensity. Respond in structured format.",
-		codexsdk.WithPermissionMode("acceptAll"),
+		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithOutputFormat(map[string]any{
 			"type": "json_schema",
 			"schema": map[string]any{

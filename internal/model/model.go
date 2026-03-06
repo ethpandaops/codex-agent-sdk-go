@@ -1,7 +1,10 @@
 // Package model defines types for Codex CLI model discovery.
 package model
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Info describes a model available from the Codex CLI.
 type Info struct {
@@ -128,31 +131,28 @@ func (r *ListResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON accepts both the legacy SDK field names and the current
-// app-server payload shape.
+// UnmarshalJSON accepts the current app-server payload shape.
 func (o *ReasoningEffortOption) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		ReasoningEffort string `json:"reasoningEffort"`
 		Description     string `json:"description"`
-		Value           string `json:"value"`
-		Label           string `json:"label"`
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
-	if raw.ReasoningEffort != "" {
-		o.Value = raw.ReasoningEffort
-	} else {
-		o.Value = raw.Value
+	if raw.ReasoningEffort == "" {
+		return fmt.Errorf("reasoning effort option: missing reasoningEffort")
 	}
 
-	if raw.Description != "" {
-		o.Label = raw.Description
-	} else {
-		o.Label = raw.Label
+	o.Value = raw.ReasoningEffort
+
+	if raw.Description == "" {
+		return fmt.Errorf("reasoning effort option: missing description")
 	}
+
+	o.Label = raw.Description
 
 	return nil
 }

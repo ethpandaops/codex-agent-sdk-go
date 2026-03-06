@@ -281,3 +281,78 @@ func TestLookupThread_NullableFields(t *testing.T) {
 	require.Nil(t, row.AgentNickname)
 	require.Nil(t, row.AgentRole)
 }
+
+func TestListThreads(t *testing.T) {
+	t.Parallel()
+
+	dbPath := createTestDB(t)
+	now := time.Now().UTC()
+
+	insertTestThread(t, dbPath,
+		"550e8400-e29b-41d4-a716-446655440010",
+		"/path/to/older.jsonl",
+		now.Add(-2*time.Hour).Unix(), now.Add(-2*time.Hour).Unix(),
+		"cli", "openai", "/home/user/project-a",
+		"Older", "read-only", "full-auto",
+		100, 0, nil,
+		nil, nil, nil,
+		"0.103.0", "older", nil, nil, "enabled",
+	)
+	insertTestThread(t, dbPath,
+		"550e8400-e29b-41d4-a716-446655440011",
+		"/path/to/newer.jsonl",
+		now.Add(-time.Hour).Unix(), now.Unix(),
+		"vscode", "openai", "/home/user/project-b",
+		"Newer", "workspace-write", "full-auto",
+		200, 0, nil,
+		nil, nil, nil,
+		"0.103.0", "newer", nil, nil, "enabled",
+	)
+
+	rows, err := ListThreads(context.Background(), dbPath, "")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.Equal(t, "550e8400-e29b-41d4-a716-446655440011", rows[0].ID)
+	require.Equal(t, "550e8400-e29b-41d4-a716-446655440010", rows[1].ID)
+}
+
+func TestListThreads_ProjectScoped(t *testing.T) {
+	t.Parallel()
+
+	dbPath := createTestDB(t)
+	now := time.Now().Unix()
+
+	insertTestThread(t, dbPath,
+		"550e8400-e29b-41d4-a716-446655440012",
+		"/path/to/a.jsonl",
+		now, now,
+		"cli", "openai", "/home/user/project-a",
+		"Project A", "read-only", "full-auto",
+		100, 0, nil,
+		nil, nil, nil,
+		"0.103.0", "a", nil, nil, "enabled",
+	)
+	insertTestThread(t, dbPath,
+		"550e8400-e29b-41d4-a716-446655440013",
+		"/path/to/b.jsonl",
+		now, now,
+		"cli", "openai", "/home/user/project-b",
+		"Project B", "read-only", "full-auto",
+		100, 0, nil,
+		nil, nil, nil,
+		"0.103.0", "b", nil, nil, "enabled",
+	)
+
+	rows, err := ListThreads(context.Background(), dbPath, "/home/user/project-a")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "550e8400-e29b-41d4-a716-446655440012", rows[0].ID)
+}
+
+func TestListThreads_NoDatabaseFile(t *testing.T) {
+	t.Parallel()
+
+	rows, err := ListThreads(context.Background(), filepath.Join(t.TempDir(), "missing.sqlite"), "")
+	require.NoError(t, err)
+	require.Empty(t, rows)
+}
