@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -11,6 +12,24 @@ import (
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/userinput"
 	"github.com/stretchr/testify/require"
 )
+
+type testSDKMCPServer struct {
+	name string
+}
+
+func (s *testSDKMCPServer) Name() string { return s.name }
+
+func (s *testSDKMCPServer) Version() string { return "1.0.0" }
+
+func (s *testSDKMCPServer) ListTools() []map[string]any {
+	return []map[string]any{{
+		"name": "add",
+	}}
+}
+
+func (s *testSDKMCPServer) CallTool(_ context.Context, name string, _ map[string]any) (map[string]any, error) {
+	return nil, fmt.Errorf("unexpected CallTool(%s)", name)
+}
 
 // TestSession_NeedsInitialization_Empty tests that NeedsInitialization returns false
 // when no CanUseTool or MCP servers are configured.
@@ -216,6 +235,54 @@ func TestSession_HandleDynamicToolCall_UnknownTool(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, items, 1)
 	require.Contains(t, items[0]["text"], "unknown tool")
+}
+
+func TestSession_HandleCanUseTool_PublicSDKMCPNameAllowed(t *testing.T) {
+	log := slog.Default()
+
+	opts := &config.Options{
+		AllowedTools: []string{"mcp__calc__add"},
+	}
+	require.NoError(t, config.ConfigureToolPermissionPolicy(opts))
+
+	session := NewSession(log, nil, opts)
+	session.sdkMcpServers["calc"] = &testSDKMCPServer{name: "calc"}
+
+	resp, err := session.HandleCanUseTool(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"tool_name": "sdkmcp__calc__add",
+			"input": map[string]any{
+				"a": float64(15),
+				"b": float64(27),
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "accept", resp["decision"])
+}
+
+func TestSession_HandleCanUseTool_PlainDynamicSDKMCPPrefixPreserved(t *testing.T) {
+	log := slog.Default()
+
+	opts := &config.Options{
+		AllowedTools: []string{"sdkmcp__plain_dynamic_tool"},
+	}
+	require.NoError(t, config.ConfigureToolPermissionPolicy(opts))
+
+	session := NewSession(log, nil, opts)
+
+	resp, err := session.HandleCanUseTool(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"tool_name": "sdkmcp__plain_dynamic_tool",
+			"input": map[string]any{
+				"value": "secret",
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "accept", resp["decision"])
 }
 
 func TestSession_BuildInitializePayload_IncludesAdvancedFields(t *testing.T) {

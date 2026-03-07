@@ -33,7 +33,7 @@ func exampleCancellation() {
 	fmt.Println("The example triggers cancellation automatically after the callback starts.")
 	fmt.Println()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	client := codexsdk.NewClient()
 
@@ -136,6 +136,7 @@ func exampleCancellation() {
 	}
 
 	<-responseDone
+	fmt.Println("[MAIN] Cancellation example completed")
 	fmt.Println()
 }
 
@@ -145,7 +146,7 @@ func exampleGracefulShutdown() {
 	fmt.Println("This example demonstrates graceful shutdown of in-flight callbacks.")
 	fmt.Println()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	client := codexsdk.NewClient()
 
@@ -228,6 +229,7 @@ func exampleGracefulShutdown() {
 		fmt.Println("[MAIN] Timeout waiting for callback to exit")
 	}
 
+	fmt.Println("[MAIN] Graceful shutdown example completed")
 	fmt.Println()
 }
 

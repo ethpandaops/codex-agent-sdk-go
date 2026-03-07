@@ -10,9 +10,8 @@ import (
 	"time"
 
 	sdkerrors "github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
+	_ "github.com/glebarez/go-sqlite"
 	"github.com/stretchr/testify/require"
-
-	_ "modernc.org/sqlite"
 )
 
 const createThreadsTable = `CREATE TABLE threads (

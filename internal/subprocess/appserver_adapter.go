@@ -55,7 +55,14 @@ type AppServerAdapter struct {
 
 	// lastAssistantText caches the latest completed assistant text for a turn.
 	// Used as a fallback result payload when turn/completed does not include one.
-	lastAssistantText string
+	lastAssistantText       string
+	lastAssistantTextByTurn map[string]string
+
+	// currentTurnHasOutputSchema tracks whether the active turn requested
+	// structured output, allowing the adapter to parse JSON final text back
+	// into ResultMessage.StructuredOutput when app-server omits a dedicated field.
+	currentTurnHasOutputSchema bool
+	turnHasOutputSchema        map[string]bool
 
 	// includePartialMessages controls whether streaming deltas are emitted
 	// as stream_event messages. When false, delta notifications are suppressed.
@@ -64,6 +71,7 @@ type AppServerAdapter struct {
 	// pendingRPCRequests maps synthetic request_id strings to JSON-RPC IDs
 	// for server-to-client requests (hooks/MCP).
 	pendingRPCRequests map[string]int64
+	sdkMCPServerNames  map[string]struct{}
 
 	wg sync.WaitGroup
 }
@@ -77,13 +85,16 @@ func NewAppServerAdapter(
 	opts *config.Options,
 ) *AppServerAdapter {
 	return &AppServerAdapter{
-		log:                    log.With(slog.String("component", "appserver_adapter")),
-		inner:                  NewAppServerTransport(log, opts),
-		messages:               make(chan map[string]any, 128),
-		errs:                   make(chan error, 4),
-		done:                   make(chan struct{}),
-		includePartialMessages: opts.IncludePartialMessages,
-		pendingRPCRequests:     make(map[string]int64, 8),
+		log:                     log.With(slog.String("component", "appserver_adapter")),
+		inner:                   NewAppServerTransport(log, opts),
+		messages:                make(chan map[string]any, 128),
+		errs:                    make(chan error, 4),
+		done:                    make(chan struct{}),
+		includePartialMessages:  opts.IncludePartialMessages,
+		pendingRPCRequests:      make(map[string]int64, 8),
+		lastAssistantTextByTurn: make(map[string]string, 8),
+		turnHasOutputSchema:     make(map[string]bool, 8),
+		sdkMCPServerNames:       make(map[string]struct{}, 8),
 	}
 }
 
@@ -261,6 +272,7 @@ func (a *AppServerAdapter) handleInitialize(
 	a.effortOverride = turnOverrides.effort
 	a.outputSchemaOverride = cloneAnyValue(turnOverrides.outputSchema)
 	a.collaborationModeOverride = cloneAnyMap(turnOverrides.collaborationMode)
+	a.sdkMCPServerNames = cloneStringSet(turnOverrides.sdkMCPServerNames)
 	a.mu.Unlock()
 
 	a.injectControlResponse(requestID, map[string]any{
@@ -276,7 +288,10 @@ type initializeTurnOverrides struct {
 	collaborationMode map[string]any
 	effort            *string
 	outputSchema      any
+	sdkMCPServerNames map[string]struct{}
 }
+
+const sdkMCPDynamicToolPrefix = "sdkmcp__"
 
 //nolint:gocyclo // initialization normalization intentionally handles many option variants.
 func buildInitializeRPC(
@@ -353,7 +368,6 @@ func buildInitializeRPC(
 		"disallowedTools",
 		"tools",
 		"addDirs",
-		"mcpServers",
 		"dynamicTools",
 		"permissionPromptToolName",
 	}
@@ -364,6 +378,27 @@ func buildInitializeRPC(
 		}
 
 		params[key] = cloneAnyValue(value)
+	}
+
+	if rawMCPServers, ok := requestData["mcpServers"]; ok && rawMCPServers != nil {
+		mcpServers, dynamicTools, sdkServerNames := normalizeAppServerMCPServers(rawMCPServers)
+		turnOverrides.sdkMCPServerNames = cloneStringSet(sdkServerNames)
+
+		if err := validateSDKMCPDynamicToolCollisions(params["dynamicTools"], dynamicTools); err != nil {
+			return "", nil, initializeTurnOverrides{}, err
+		}
+
+		if len(mcpServers) > 0 {
+			params["mcpServers"] = mcpServers
+		}
+
+		if len(dynamicTools) > 0 {
+			params["dynamicTools"] = append(dynamicToolListFromAny(params["dynamicTools"]), dynamicTools...)
+		}
+
+		rewriteAppServerToolList(params, "tools", sdkServerNames)
+		rewriteAppServerToolList(params, "allowedTools", sdkServerNames)
+		rewriteAppServerToolList(params, "disallowedTools", sdkServerNames)
 	}
 
 	if outputSchema, ok := requestData["outputSchema"]; ok {
@@ -401,6 +436,266 @@ func buildInitializeRPC(
 	}
 
 	return "thread/start", params, turnOverrides, nil
+}
+
+func validateSDKMCPDynamicToolCollisions(existing any, generated []map[string]any) error {
+	existingTools := dynamicToolListFromAny(existing)
+	if len(existingTools) == 0 && len(generated) == 0 {
+		return nil
+	}
+
+	generatedNames := make(map[string]struct{}, len(generated))
+	for _, tool := range generated {
+		name, _ := tool["name"].(string)
+		if name == "" {
+			continue
+		}
+
+		generatedNames[name] = struct{}{}
+	}
+
+	for _, tool := range existingTools {
+		name, _ := tool["name"].(string)
+		if name == "" {
+			continue
+		}
+
+		if strings.HasPrefix(name, sdkMCPDynamicToolPrefix) {
+			return fmt.Errorf(
+				"%w: dynamic tool name %q uses reserved SDK MCP prefix %q",
+				sdkerrors.ErrUnsupportedOption,
+				name,
+				sdkMCPDynamicToolPrefix,
+			)
+		}
+
+		if _, ok := generatedNames[name]; ok {
+			return fmt.Errorf(
+				"%w: dynamic tool name %q collides with generated SDK MCP tool",
+				sdkerrors.ErrUnsupportedOption,
+				name,
+			)
+		}
+	}
+
+	return nil
+}
+
+func normalizeAppServerMCPServers(raw any) (map[string]any, []map[string]any, map[string]struct{}) {
+	servers, ok := raw.(map[string]any)
+	if !ok || len(servers) == 0 {
+		return nil, nil, nil
+	}
+
+	normalizedServers := make(map[string]any, len(servers))
+	dynamicTools := make([]map[string]any, 0, len(servers))
+	sdkServerNames := make(map[string]struct{}, len(servers))
+
+	for serverName, rawServer := range servers {
+		server, ok := rawServer.(map[string]any)
+		if !ok || len(server) == 0 {
+			continue
+		}
+
+		serverType, _ := server["type"].(string)
+		if serverType != "sdk" {
+			normalizedServers[serverName] = cloneAnyMap(server)
+
+			continue
+		}
+
+		sdkServerNames[serverName] = struct{}{}
+
+		sdkTools, ok := server["tools"].([]map[string]any)
+		if !ok {
+			if toolList, ok := server["tools"].([]any); ok {
+				sdkTools = make([]map[string]any, 0, len(toolList))
+				for _, rawTool := range toolList {
+					toolMap, ok := rawTool.(map[string]any)
+					if !ok {
+						continue
+					}
+
+					sdkTools = append(sdkTools, toolMap)
+				}
+			}
+		}
+
+		dynamicTools = append(dynamicTools, sdkMCPServerToolsToDynamicTools(serverName, sdkTools)...)
+	}
+
+	if len(normalizedServers) == 0 {
+		normalizedServers = nil
+	}
+
+	if len(dynamicTools) == 0 {
+		dynamicTools = nil
+	}
+
+	if len(sdkServerNames) == 0 {
+		sdkServerNames = nil
+	}
+
+	return normalizedServers, dynamicTools, sdkServerNames
+}
+
+func sdkMCPServerToolsToDynamicTools(serverName string, tools []map[string]any) []map[string]any {
+	if len(tools) == 0 {
+		return nil
+	}
+
+	dynamicTools := make([]map[string]any, 0, len(tools))
+
+	for _, tool := range tools {
+		toolName, _ := tool["name"].(string)
+		if toolName == "" {
+			continue
+		}
+
+		dynamicTool := map[string]any{
+			"name": sdkMCPDynamicToolName(serverName, toolName),
+		}
+
+		description, _ := tool["description"].(string)
+		if description != "" {
+			dynamicTool["description"] = description
+		} else {
+			dynamicTool["description"] = fmt.Sprintf("MCP tool %s on server %s", toolName, serverName)
+		}
+
+		if inputSchema, ok := tool["inputSchema"]; ok && inputSchema != nil {
+			dynamicTool["inputSchema"] = cloneAnyValue(inputSchema)
+		} else {
+			dynamicTool["inputSchema"] = map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			}
+		}
+
+		dynamicTools = append(dynamicTools, dynamicTool)
+	}
+
+	return dynamicTools
+}
+
+func rewriteAppServerToolList(params map[string]any, key string, sdkServerNames map[string]struct{}) {
+	tools := stringListFromAny(params[key])
+
+	if len(tools) == 0 || len(sdkServerNames) == 0 {
+		return
+	}
+
+	rewritten := make([]string, 0, len(tools))
+
+	for _, toolName := range tools {
+		serverName, rawToolName, err := parsePublicMCPToolName(toolName)
+		if err != nil {
+			rewritten = append(rewritten, toolName)
+
+			continue
+		}
+
+		if _, ok := sdkServerNames[serverName]; ok {
+			rewritten = append(rewritten, sdkMCPDynamicToolName(serverName, rawToolName))
+		} else {
+			rewritten = append(rewritten, toolName)
+		}
+	}
+
+	params[key] = rewritten
+}
+
+func dynamicToolListFromAny(value any) []map[string]any {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case []map[string]any:
+		return cloneMapSlice(v)
+	case []any:
+		tools := make([]map[string]any, 0, len(v))
+		for _, raw := range v {
+			tool, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			tools = append(tools, cloneAnyMap(tool))
+		}
+
+		return tools
+	default:
+		return nil
+	}
+}
+
+func stringListFromAny(value any) []string {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case []string:
+		out := make([]string, len(v))
+		copy(out, v)
+
+		return out
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, raw := range v {
+			s, ok := raw.(string)
+			if !ok {
+				continue
+			}
+
+			out = append(out, s)
+		}
+
+		return out
+	default:
+		return nil
+	}
+}
+
+func sdkMCPDynamicToolName(serverName, toolName string) string {
+	return fmt.Sprintf("%s%s__%s", sdkMCPDynamicToolPrefix, serverName, toolName)
+}
+
+func internalToPublicToolName(name string, sdkServerNames map[string]struct{}) string {
+	if !strings.HasPrefix(name, sdkMCPDynamicToolPrefix) {
+		return name
+	}
+
+	if len(sdkServerNames) == 0 {
+		return name
+	}
+
+	rest := strings.TrimPrefix(name, sdkMCPDynamicToolPrefix)
+
+	idx := strings.Index(rest, "__")
+	if idx <= 0 {
+		return name
+	}
+
+	serverName := rest[:idx]
+	if _, ok := sdkServerNames[serverName]; !ok {
+		return name
+	}
+
+	return "mcp__" + rest
+}
+
+func parsePublicMCPToolName(fullName string) (serverName, toolName string, err error) {
+	const prefix = "mcp__"
+	if len(fullName) <= len(prefix) || fullName[:len(prefix)] != prefix {
+		return "", "", fmt.Errorf("invalid MCP tool name format: %s", fullName)
+	}
+
+	rest := fullName[len(prefix):]
+
+	idx := strings.Index(rest, "__")
+	if idx <= 0 {
+		return "", "", fmt.Errorf("invalid MCP tool name format (missing server/tool separator): %s", fullName)
+	}
+
+	return rest[:idx], rest[idx+2:], nil
 }
 
 // handleInterrupt translates an "interrupt" control_request into a
@@ -1025,6 +1320,17 @@ func (a *AppServerAdapter) handleUserMessage(
 	collaborationModeOverride := cloneAnyMap(a.collaborationModeOverride)
 	a.mu.Unlock()
 
+	outputSchema := outputSchemaOverride
+
+	if rawOutputSchema, ok := raw["outputSchema"]; ok {
+		normalizedOutputSchema, err := normalizeOutputSchema(rawOutputSchema)
+		if err != nil {
+			return err
+		}
+
+		outputSchema = normalizedOutputSchema
+	}
+
 	params := map[string]any{
 		"input": input,
 	}
@@ -1049,9 +1355,13 @@ func (a *AppServerAdapter) handleUserMessage(
 		params["effort"] = *effortOverride
 	}
 
-	if outputSchemaOverride != nil {
-		params["outputSchema"] = outputSchemaOverride
+	if outputSchema != nil {
+		params["outputSchema"] = outputSchema
 	}
+
+	a.mu.Lock()
+	a.currentTurnHasOutputSchema = outputSchema != nil
+	a.mu.Unlock()
 
 	if collaborationModeOverride != nil {
 		// Ensure the collaboration mode settings include a model — the CLI
@@ -1078,11 +1388,13 @@ func (a *AppServerAdapter) handleUserMessage(
 			if tid, ok := result["turnId"].(string); ok && tid != "" {
 				a.mu.Lock()
 				a.turnID = tid
+				a.turnHasOutputSchema[tid] = outputSchema != nil
 				a.mu.Unlock()
 			} else if turnObj, ok := result["turn"].(map[string]any); ok {
 				if tid, ok := turnObj["id"].(string); ok && tid != "" {
 					a.mu.Lock()
 					a.turnID = tid
+					a.turnHasOutputSchema[tid] = outputSchema != nil
 					a.mu.Unlock()
 				}
 			}
@@ -1157,6 +1469,7 @@ func (a *AppServerAdapter) handleServerRequest(req *RPCIncomingRequest) {
 
 	a.mu.Lock()
 	a.pendingRPCRequests[syntheticID] = req.ID
+	sdkServerNames := cloneStringSet(a.sdkMCPServerNames)
 	a.mu.Unlock()
 
 	var requestPayload map[string]any
@@ -1166,6 +1479,14 @@ func (a *AppServerAdapter) handleServerRequest(req *RPCIncomingRequest) {
 		}
 	} else {
 		requestPayload = make(map[string]any, 1)
+	}
+
+	if toolName, ok := requestPayload["tool"].(string); ok && toolName != "" {
+		requestPayload["tool"] = internalToPublicToolName(toolName, sdkServerNames)
+	}
+
+	if toolName, ok := requestPayload["tool_name"].(string); ok && toolName != "" {
+		requestPayload["tool_name"] = internalToPublicToolName(toolName, sdkServerNames)
 	}
 
 	requestPayload["subtype"] = methodToSubtype(req.Method)
@@ -1225,6 +1546,11 @@ func (a *AppServerAdapter) translateNotification(
 				a.mu.Lock()
 				a.turnID = tid
 				a.lastAssistantText = ""
+
+				a.lastAssistantTextByTurn[tid] = ""
+				if _, known := a.turnHasOutputSchema[tid]; !known {
+					a.turnHasOutputSchema[tid] = a.currentTurnHasOutputSchema
+				}
 				a.mu.Unlock()
 			}
 		}
@@ -1268,6 +1594,14 @@ func (a *AppServerAdapter) translateNotification(
 
 	case "turn/failed":
 		event := map[string]any{"type": "turn.failed"}
+
+		turnID := extractTurnID(params)
+		if turnID != "" {
+			a.mu.Lock()
+			delete(a.turnHasOutputSchema, turnID)
+			delete(a.lastAssistantTextByTurn, turnID)
+			a.mu.Unlock()
+		}
 
 		if errMsg, ok := params["error"].(string); ok {
 			event["error"] = map[string]any{"message": errMsg}
@@ -1340,8 +1674,17 @@ func (a *AppServerAdapter) translateItemNotification(
 	if eventType == "item.completed" {
 		if itemType, ok := item["type"].(string); ok && itemType == "agent_message" {
 			if text, ok := item["text"].(string); ok && strings.TrimSpace(text) != "" {
+				turnID := extractTurnID(params)
+
 				a.mu.Lock()
+				if turnID == "" {
+					turnID = a.turnID
+				}
+
 				a.lastAssistantText = text
+				if turnID != "" {
+					a.lastAssistantTextByTurn[turnID] = text
+				}
 				a.mu.Unlock()
 			}
 		}
@@ -1423,15 +1766,46 @@ func (a *AppServerAdapter) translateTurnCompleted(
 		event["is_error"] = v
 	}
 
+	turnID := extractTurnID(params)
+
+	a.mu.Lock()
+	hasOutputSchema := a.currentTurnHasOutputSchema
+	lastAssistantText := a.lastAssistantText
+
+	if turnID != "" {
+		if turnScoped, ok := a.turnHasOutputSchema[turnID]; ok {
+			hasOutputSchema = turnScoped
+
+			delete(a.turnHasOutputSchema, turnID)
+		}
+
+		if turnText, ok := a.lastAssistantTextByTurn[turnID]; ok {
+			lastAssistantText = turnText
+
+			delete(a.lastAssistantTextByTurn, turnID)
+		} else {
+			lastAssistantText = ""
+		}
+	}
+	a.mu.Unlock()
+
 	if v, ok := params["result"]; ok {
 		event["result"] = v
-	} else {
-		a.mu.Lock()
-		lastAssistantText := a.lastAssistantText
-		a.mu.Unlock()
 
+		if hasOutputSchema {
+			if structured, ok := parseStructuredOutputValue(v); ok {
+				event["structured_output"] = structured
+			}
+		}
+	} else {
 		if strings.TrimSpace(lastAssistantText) != "" {
 			event["result"] = lastAssistantText
+
+			if hasOutputSchema {
+				if structured, ok := parseStructuredOutputValue(lastAssistantText); ok {
+					event["structured_output"] = structured
+				}
+			}
 		}
 	}
 
@@ -1483,6 +1857,43 @@ func convertTokenUsage(tokenUsage map[string]any) map[string]any {
 	}
 
 	return result
+}
+
+func extractTurnID(params map[string]any) string {
+	if turnID, ok := params["turnId"].(string); ok && turnID != "" {
+		return turnID
+	}
+
+	if turnID, ok := params["turn_id"].(string); ok && turnID != "" {
+		return turnID
+	}
+
+	if turnObj, ok := params["turn"].(map[string]any); ok {
+		if turnID, ok := turnObj["id"].(string); ok && turnID != "" {
+			return turnID
+		}
+	}
+
+	nested, _ := params["item"].(map[string]any)
+	if nested == nil {
+		nested = params
+	}
+
+	if turnID, ok := nested["turnId"].(string); ok && turnID != "" {
+		return turnID
+	}
+
+	if turnID, ok := nested["turn_id"].(string); ok && turnID != "" {
+		return turnID
+	}
+
+	if turnObj, ok := nested["turn"].(map[string]any); ok {
+		if turnID, ok := turnObj["id"].(string); ok && turnID != "" {
+			return turnID
+		}
+	}
+
+	return ""
 }
 
 const permissionModePlan = "plan"
@@ -1542,7 +1953,43 @@ func normalizeEffort(value string) (string, error) {
 	}
 }
 
+func parseStructuredOutputValue(value any) (any, bool) {
+	switch v := value.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil, false
+		}
+
+		var structured any
+		if err := json.Unmarshal([]byte(v), &structured); err != nil {
+			return nil, false
+		}
+
+		return structured, true
+	case map[string]any, []any:
+		return cloneAnyValue(v), true
+	default:
+		return nil, false
+	}
+}
+
 func normalizeOutputSchema(value any) (any, error) {
+	normalizeParsed := func(parsed any) any {
+		m, ok := parsed.(map[string]any)
+		if !ok {
+			return parsed
+		}
+
+		formatType, _ := m["type"].(string)
+		if formatType == "json_schema" {
+			if schema, ok := m["schema"]; ok {
+				return cloneAnyValue(schema)
+			}
+		}
+
+		return parsed
+	}
+
 	switch v := value.(type) {
 	case nil:
 		return nil, nil //nolint:nilnil // nil output schema is the explicit "unset" signal.
@@ -1561,9 +2008,9 @@ func normalizeOutputSchema(value any) (any, error) {
 			)
 		}
 
-		return parsed, nil
+		return normalizeParsed(parsed), nil
 	default:
-		return cloneAnyValue(value), nil
+		return normalizeParsed(cloneAnyValue(value)), nil
 	}
 }
 
@@ -1594,6 +2041,27 @@ func cloneAnyMap(src map[string]any) map[string]any {
 	maps.Copy(dst, src)
 
 	return dst
+}
+
+func cloneMapSlice(src []map[string]any) []map[string]any {
+	if src == nil {
+		return nil
+	}
+
+	dst := make([]map[string]any, len(src))
+	for i, item := range src {
+		dst[i] = cloneAnyMap(item)
+	}
+
+	return dst
+}
+
+func cloneStringSet(src map[string]struct{}) map[string]struct{} {
+	if src == nil {
+		return nil
+	}
+
+	return maps.Clone(src)
 }
 
 func cloneAnyValue(src any) any {
@@ -1762,6 +2230,18 @@ func (a *AppServerAdapter) extractAndTranslateItem(params map[string]any) map[st
 		item["type"] = camelToSnake(itemType)
 	}
 
+	a.mu.Lock()
+	sdkServerNames := cloneStringSet(a.sdkMCPServerNames)
+	a.mu.Unlock()
+
+	if name, ok := item["name"].(string); ok && name != "" {
+		item["name"] = internalToPublicToolName(name, sdkServerNames)
+	}
+
+	if tool, ok := item["tool"].(string); ok && tool != "" {
+		item["tool"] = internalToPublicToolName(tool, sdkServerNames)
+	}
+
 	// Reasoning items carry text in a "summary" string array, not "text".
 	if item["type"] == "reasoning" {
 		if summaryArr, ok := item["summary"].([]any); ok && len(summaryArr) > 0 {
@@ -1823,6 +2303,7 @@ func extractThreadID(result map[string]any) string {
 var camelToSnakeMap = map[string]string{
 	"agentMessage":     "agent_message",
 	"commandExecution": "command_execution",
+	"dynamicToolCall":  "dynamic_tool_call",
 	"fileChange":       "file_change",
 	"mcpToolCall":      "mcp_tool_call",
 	"userMessage":      "user_message",

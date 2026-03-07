@@ -365,7 +365,7 @@ func (c *Controller) handleControlRequest(ctx context.Context, msg map[string]an
 		return
 	}
 
-	opCtx, cancel := context.WithCancel(ctx)
+	opCtx, cancel := context.WithCancel(ctx) //nolint:gosec // cancel is stored in inFlightOperation and called in defer
 
 	op := &inFlightOperation{
 		requestID: requestID,

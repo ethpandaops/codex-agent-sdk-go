@@ -7,9 +7,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,6 +46,10 @@ func NewMemoryStore(basePath string) (*MemoryStore, error) {
 	}
 
 	return &MemoryStore{basePath: absPath}, nil
+}
+
+func (m *MemoryStore) MemoriesPath() string {
+	return filepath.Join(m.basePath, "memories")
 }
 
 // validatePath ensures the path starts with /memories and resolves to within basePath.
@@ -421,7 +427,7 @@ func displayMessage(msg codexsdk.Message) {
 
 func recordToolUse(toolName string) {
 	switch {
-	case strings.HasPrefix(toolName, "mcp__memory__"):
+	case strings.HasPrefix(toolName, "mcp__memory__"), strings.HasPrefix(toolName, "memory:"):
 		toolUsage.MCPMemory++
 	case toolName == "Bash":
 		toolUsage.Bash++
@@ -437,6 +443,7 @@ func main() {
 	fmt.Println()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	toolUsage = observedToolUsage{}
 
 	// Create memory store
 	store, err := NewMemoryStore("./memory")
@@ -445,7 +452,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Memory store created at ./memory/memories/")
+	fmt.Printf("Memory store created at %s\n", store.MemoriesPath())
 	fmt.Println()
 
 	// Create memory tools and MCP server
@@ -463,6 +470,9 @@ func main() {
 		}
 	}()
 
+	shellMemoryDir := store.MemoriesPath()
+	shellMemoryFile := filepath.Join(shellMemoryDir, "user_info.txt")
+
 	if startErr := client.Start(ctx,
 		codexsdk.WithLogger(logger),
 		codexsdk.WithMCPServers(map[string]codexsdk.MCPServerConfig{
@@ -477,8 +487,10 @@ func main() {
 			"mcp__memory__list",
 		),
 		codexsdk.WithPermissionMode("bypassPermissions"),
-		codexsdk.WithSystemPrompt("You have access to memory MCP tools that persist data to the filesystem. "+
-			"Prefer mcp__memory__* tools when available. If you use shell commands instead, keep all paths under memories/."),
+		codexsdk.WithSystemPrompt("You have access to memory MCP tools backed by the filesystem directory "+shellMemoryDir+". "+
+			"Prefer mcp__memory__* tools when available. "+
+			"When using memory tools, use paths under memories/. "+
+			"If you use shell commands instead, operate only inside "+shellMemoryDir+" and nowhere else."),
 	); startErr != nil {
 		fmt.Printf("Failed to connect: %v\n", startErr)
 
@@ -488,9 +500,12 @@ func main() {
 	// Demo: Store and retrieve information
 	prompts := []string{
 		"Please remember that my name is Alice and my favorite color is blue. " +
-			"Store this in memories/user_info.txt",
-		"What is my name and favorite color? Read from the memory you just stored.",
-		"List all files in the memories directory.",
+			"Store this in memories/user_info.txt. If you use shell commands instead of the memory tools, write to " +
+			shellMemoryFile + ".",
+		"What is my name and favorite color? Read from memories/user_info.txt. " +
+			"If you use shell commands instead of the memory tools, read " + shellMemoryFile + ".",
+		"List all files in the memories directory. If you use shell commands instead of the memory tools, list " +
+			shellMemoryDir + ".",
 	}
 
 	for i, prompt := range prompts {
@@ -526,29 +541,65 @@ func main() {
 	}
 
 	fmt.Println()
-	fmt.Println("Files persisted in ./memory/memories/:")
+	fmt.Printf("Files persisted in %s:\n", store.MemoriesPath())
 
-	entries, listErr := os.ReadDir("./memory/memories")
+	entries, listErr := collectPersistedFiles(store.MemoriesPath())
 	if listErr != nil {
 		fmt.Printf("Failed to list directory: %v\n", listErr)
 
 		return
 	}
 
-	for _, entry := range entries {
-		entryPath := filepath.Join("./memory/memories", entry.Name())
-
-		if !entry.IsDir() {
-			content, readErr := os.ReadFile(entryPath)
-			if readErr != nil {
-				fmt.Printf("  %s: (error reading)\n", entry.Name())
-
-				continue
-			}
-
-			fmt.Printf("  %s: %s\n", entry.Name(), strings.TrimSpace(string(content)))
-		} else {
-			fmt.Printf("  %s/\n", entry.Name())
-		}
+	if len(entries) == 0 {
+		fmt.Println("  (empty)")
 	}
+
+	for _, entry := range entries {
+		fmt.Printf("  %s: %s\n", entry.Path, entry.Content)
+	}
+}
+
+type persistedFile struct {
+	Path    string
+	Content string
+}
+
+func collectPersistedFiles(root string) ([]persistedFile, error) {
+	files := make([]persistedFile, 0, 4)
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		content, err := os.ReadFile(path) //nolint:gosec // example code; root is a trusted local directory
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+
+		files = append(files, persistedFile{
+			Path:    filepath.ToSlash(relPath),
+			Content: strings.TrimSpace(string(content)),
+		})
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+
+	return files, nil
 }

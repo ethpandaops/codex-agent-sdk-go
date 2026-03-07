@@ -2,6 +2,7 @@ package message
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -176,6 +177,17 @@ func TestParseCodexAgentMessageDeltaSuppression(t *testing.T) {
 			wantSystem: true,
 		},
 		{
+			name: "empty completed reasoning suppressed to SystemMessage",
+			data: map[string]any{
+				"type": "item.completed",
+				"item": map[string]any{
+					"type": "reasoning",
+				},
+			},
+			wantType:   "system",
+			wantSystem: true,
+		},
+		{
 			name: "item.completed agent_message emits AssistantMessage",
 			data: map[string]any{
 				"type": "item.completed",
@@ -211,10 +223,161 @@ func TestParseCodexAgentMessageDeltaSuppression(t *testing.T) {
 			if tt.wantSystem {
 				sys, ok := msg.(*SystemMessage)
 				require.True(t, ok, "expected *SystemMessage")
-				require.Contains(t, sys.Subtype, "agent_message_delta")
+				require.True(t,
+					strings.Contains(sys.Subtype, "agent_message_delta") ||
+						strings.Contains(sys.Subtype, "reasoning_delta"),
+				)
 			}
 		})
 	}
+}
+
+func TestParseCodexDynamicToolCall(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":   "call_123",
+			"type": "dynamic_tool_call",
+			"name": "add",
+			"arguments": map[string]any{
+				"a": 12.0,
+				"b": 30.0,
+			},
+			"success": true,
+			"contentItems": []any{
+				map[string]any{
+					"type": "inputText",
+					"text": "{\"result\":42}",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok, "expected *AssistantMessage")
+	require.Len(t, assistant.Content, 2)
+
+	toolUse, ok := assistant.Content[0].(*ToolUseBlock)
+	require.True(t, ok, "expected ToolUseBlock")
+	require.Equal(t, "add", toolUse.Name)
+	require.Equal(t, 12.0, toolUse.Input["a"])
+	require.Equal(t, 30.0, toolUse.Input["b"])
+
+	toolResult, ok := assistant.Content[1].(*ToolResultBlock)
+	require.True(t, ok, "expected ToolResultBlock")
+	require.Equal(t, "call_123", toolResult.ToolUseID)
+	require.False(t, toolResult.IsError)
+	require.Len(t, toolResult.Content, 1)
+
+	textBlock, ok := toolResult.Content[0].(*TextBlock)
+	require.True(t, ok, "expected TextBlock")
+	require.Equal(t, "{\"result\":42}", textBlock.Text)
+}
+
+func TestParseCodexDynamicToolCall_NonTextContentNotDropped(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":   "call_image_123",
+			"type": "dynamic_tool_call",
+			"name": "render_diagram",
+			"arguments": map[string]any{
+				"prompt": "draw a diagram",
+			},
+			"success": true,
+			"contentItems": []any{
+				map[string]any{
+					"type":     "image",
+					"data":     "ZmFrZV9wbmc=",
+					"mimeType": "image/png",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok, "expected *AssistantMessage")
+	require.Len(t, assistant.Content, 2)
+
+	toolResult, ok := assistant.Content[1].(*ToolResultBlock)
+	require.True(t, ok, "expected ToolResultBlock")
+	require.NotEmpty(t,
+		toolResult.Content,
+		"non-text dynamic tool results should be preserved instead of being dropped",
+	)
+}
+
+func TestParseCodexDynamicToolCall_PublicSDKMCPNameMatchesMCPToolCallFormat(t *testing.T) {
+	logger := slog.Default()
+
+	regularMsg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":     "mcp_123",
+			"type":   "mcp_tool_call",
+			"server": "calc",
+			"tool":   "add",
+		},
+	})
+	require.NoError(t, err)
+
+	sdkMsg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":   "sdk_123",
+			"type": "dynamic_tool_call",
+			"tool": "mcp__calc__add",
+			"arguments": map[string]any{
+				"a": 15.0,
+				"b": 27.0,
+			},
+			"success": true,
+		},
+	})
+	require.NoError(t, err)
+
+	regularAssistant, ok := regularMsg.(*AssistantMessage)
+	require.True(t, ok, "expected *AssistantMessage for MCP tool call")
+
+	sdkAssistant, ok := sdkMsg.(*AssistantMessage)
+	require.True(t, ok, "expected *AssistantMessage for SDK-backed MCP tool call")
+
+	regularToolUse, ok := regularAssistant.Content[0].(*ToolUseBlock)
+	require.True(t, ok, "expected ToolUseBlock for MCP tool call")
+
+	sdkToolUse, ok := sdkAssistant.Content[0].(*ToolUseBlock)
+	require.True(t, ok, "expected ToolUseBlock for SDK-backed MCP tool call")
+
+	require.Equal(t,
+		regularToolUse.Name,
+		sdkToolUse.Name,
+		"SDK-backed MCP tools should expose the same public tool name format as normal MCP tool calls",
+	)
+}
+
+func TestParseCodexTurnCompletedStructuredOutput(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "turn.completed",
+		"structured_output": map[string]any{
+			"answer": "4",
+		},
+	})
+	require.NoError(t, err)
+
+	result, ok := msg.(*ResultMessage)
+	require.True(t, ok, "expected *ResultMessage")
+
+	structured, ok := result.StructuredOutput.(map[string]any)
+	require.True(t, ok, "expected structured output map")
+	require.Equal(t, "4", structured["answer"])
 }
 
 func TestParseCodexFileChangeKindObject(t *testing.T) {
