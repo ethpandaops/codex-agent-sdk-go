@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	codexsdk "github.com/ethpandaops/codex-agent-sdk-go"
@@ -179,6 +180,10 @@ func displayMessage(msg codexsdk.Message) bool {
 			case *codexsdk.TextBlock:
 				fmt.Printf("Codex: %s\n", b.Text)
 			case *codexsdk.ToolUseBlock:
+				if shouldIgnoreToolUse(b) {
+					continue
+				}
+
 				usedTool = true
 
 				fmt.Printf("Using tool: %s\n", b.Name)
@@ -222,6 +227,17 @@ func displayMessage(msg codexsdk.Message) bool {
 	return false
 }
 
+func shouldIgnoreToolUse(block *codexsdk.ToolUseBlock) bool {
+	if block == nil || block.Name != "Bash" {
+		return false
+	}
+
+	command, _ := block.Input["command"].(string)
+	command = strings.TrimSpace(command)
+
+	return command == "true" || strings.HasSuffix(command, " -lc true") || strings.HasSuffix(command, " -lc 'true'")
+}
+
 func main() {
 	// Set up logging
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -235,15 +251,15 @@ func main() {
 
 	fmt.Println("MCP Calculator Example")
 	fmt.Println("This example registers a local MCP calculator server and asks arithmetic questions.")
-	fmt.Println("Note: the model may answer directly even when calculator tools are available.")
+	fmt.Println("Codex should use the calc MCP arithmetic tools instead of shell commands.")
 
 	// Example prompts to demonstrate calculator usage
 	prompts := []string{
-		"Calculate 15 + 27",
-		"What is 100 divided by 7?",
-		"Calculate the square root of 144",
-		"What is 2 raised to the power of 8?",
-		"Calculate (12 + 8) * 3 - 10",
+		"Calculate 15 + 27 using the calculator tools.",
+		"What is 100 divided by 7? Use the calculator tools.",
+		"Calculate the square root of 144 using the calculator tools.",
+		"What is 2 raised to the power of 8? Use the calculator tools.",
+		"Calculate (12 + 8) * 3 - 10 using the calculator tools.",
 	}
 
 	for _, prompt := range prompts {
@@ -257,6 +273,7 @@ func main() {
 
 		if err := client.Start(ctx,
 			codexsdk.WithLogger(logger),
+			codexsdk.WithPermissionMode("default"),
 			codexsdk.WithMCPServers(map[string]codexsdk.MCPServerConfig{
 				"calc": calculator,
 			}),
@@ -267,6 +284,17 @@ func main() {
 				"mcp__calc__divide",
 				"mcp__calc__sqrt",
 				"mcp__calc__power",
+			),
+			codexsdk.WithDisallowedTools(
+				"Bash",
+				"codex:list_mcp_resources",
+				"codex:list_mcp_resource_templates",
+				"calc:list_mcp_resources",
+				"calc:list_mcp_resource_templates",
+			),
+			codexsdk.WithSystemPrompt(
+				"You have calculator MCP tools on the calc server: add, subtract, multiply, divide, sqrt, and power. "+
+					"Use those tools for arithmetic in this example. Do not use Bash or MCP discovery tools.",
 			),
 		); err != nil {
 			logger.Error("Failed to connect", "error", err)

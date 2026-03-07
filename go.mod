@@ -3,13 +3,13 @@ module github.com/ethpandaops/codex-agent-sdk-go
 go 1.26.0
 
 require (
+	github.com/glebarez/go-sqlite v1.22.0
 	github.com/google/jsonschema-go v0.4.2
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.3.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/sync v0.19.0
-	modernc.org/sqlite v1.46.1
 )
 
 require (
@@ -27,4 +27,5 @@ require (
 	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.28.0 // indirect
 )

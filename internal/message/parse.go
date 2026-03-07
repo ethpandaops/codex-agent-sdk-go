@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
 )
@@ -118,6 +119,17 @@ func parseCodexItemEvent(log *slog.Logger, data map[string]any) (Message, error)
 		}, nil
 	}
 
+	// App-server emits empty reasoning items with no summary/content before
+	// final answers. These are transport lifecycle noise, not user-visible
+	// assistant messages.
+	if event.Item.Type == ItemTypeReasoning && strings.TrimSpace(event.Item.Text) == "" {
+		return &SystemMessage{
+			Type:    "system",
+			Subtype: string(event.Type) + ".reasoning_delta",
+			Data:    data,
+		}, nil
+	}
+
 	return convertCodexItem(event.Item, event.Type), nil
 }
 
@@ -206,6 +218,36 @@ func convertCodexItem(item *CodexItem, eventType EventType) *AssistantMessage {
 			},
 		}
 
+	case ItemTypeDynamicToolCall:
+		toolName := item.Name
+		if toolName == "" {
+			toolName = item.Tool
+		}
+
+		toolName = normalizePublicMCPToolName(toolName)
+
+		toolUse := &ToolUseBlock{
+			Type:  BlockTypeToolUse,
+			ID:    item.ID,
+			Name:  toolName,
+			Input: item.Arguments,
+		}
+		msg.Content = []ContentBlock{toolUse}
+
+		if eventType == EventItemCompleted {
+			result := &ToolResultBlock{
+				Type:      BlockTypeToolResult,
+				ToolUseID: item.ID,
+				Content:   contentItemsToBlocks(item.ContentItems),
+			}
+
+			if item.Success != nil && !*item.Success {
+				result.IsError = true
+			}
+
+			msg.Content = append(msg.Content, result)
+		}
+
 	case ItemTypeWebSearch:
 		msg.Content = []ContentBlock{
 			&ToolUseBlock{
@@ -235,6 +277,56 @@ func convertCodexItem(item *CodexItem, eventType EventType) *AssistantMessage {
 	return msg
 }
 
+func contentItemsToBlocks(items []ContentItem) []ContentBlock {
+	if len(items) == 0 {
+		return nil
+	}
+
+	blocks := make([]ContentBlock, 0, len(items))
+
+	for _, item := range items {
+		switch item.Type {
+		case "inputText", "text":
+			blocks = append(blocks, &TextBlock{Type: BlockTypeText, Text: item.Text})
+		default:
+			if rawText := stringifyContentItem(item); rawText != "" {
+				blocks = append(blocks, &TextBlock{Type: BlockTypeText, Text: rawText})
+			}
+		}
+	}
+
+	return blocks
+}
+
+func stringifyContentItem(item ContentItem) string {
+	if len(item.Raw) == 0 {
+		return ""
+	}
+
+	data, err := json.Marshal(item.Raw)
+	if err != nil {
+		return ""
+	}
+
+	return string(data)
+}
+
+func normalizePublicMCPToolName(name string) string {
+	const prefix = "mcp__"
+	if !strings.HasPrefix(name, prefix) {
+		return name
+	}
+
+	rest := strings.TrimPrefix(name, prefix)
+
+	idx := strings.Index(rest, "__")
+	if idx <= 0 {
+		return name
+	}
+
+	return rest[:idx] + ":" + rest[idx+2:]
+}
+
 // parseCodexTurnCompleted converts a turn.completed event to a ResultMessage.
 func parseCodexTurnCompleted(data map[string]any) (*ResultMessage, error) {
 	result := &ResultMessage{
@@ -252,6 +344,10 @@ func parseCodexTurnCompleted(data map[string]any) (*ResultMessage, error) {
 
 	if txt, ok := data["result"].(string); ok {
 		result.Result = &txt
+	}
+
+	if structured, ok := data["structured_output"]; ok {
+		result.StructuredOutput = structured
 	}
 
 	// Parse usage if present

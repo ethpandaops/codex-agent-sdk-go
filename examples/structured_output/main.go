@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	codexsdk "github.com/ethpandaops/codex-agent-sdk-go"
@@ -63,21 +64,14 @@ func getStructuredOutput(ctx context.Context, prompt string, schema string, syst
 				fmt.Printf("Tokens: %d in / %d out\n", m.Usage.InputTokens, m.Usage.OutputTokens)
 			}
 
-			if m.StructuredOutput != nil {
-				data, marshalErr := json.Marshal(m.StructuredOutput)
-				if marshalErr == nil {
-					return data, nil
-				}
-			}
-
-			if m.Result != nil && json.Valid([]byte(*m.Result)) {
-				return json.RawMessage(*m.Result), nil
+			if data, ok := decodeStructuredPayload(m.StructuredOutput, m.Result); ok {
+				return data, nil
 			}
 		}
 	}
 
-	if json.Valid([]byte(lastAssistantText)) {
-		return json.RawMessage(lastAssistantText), nil
+	if data, ok := decodeStructuredPayload(lastAssistantText, nil); ok {
+		return data, nil
 	}
 
 	return nil, fmt.Errorf("no structured output received")
@@ -147,7 +141,7 @@ func nestedStructuredOutput() {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"title":  map[string]any{"type": "string"},
+			"title":  map[string]any{"type": "string", "enum": []string{"Nineteen Eighty-Four"}},
 			"author": map[string]any{"type": "string"},
 			"rating": map[string]any{"type": "integer", "minimum": 1, "maximum": 5},
 			"review": map[string]any{
@@ -174,7 +168,7 @@ func nestedStructuredOutput() {
 
 	output, err := getStructuredOutput(
 		ctx,
-		"Write a brief review of '1984' by George Orwell. Include title, author, a rating from 1-5, and a review with a short summary, 2 pros, 2 cons, and target audience.",
+		"Write a brief review of George Orwell's novel \"Nineteen Eighty-Four\". Return that exact title as a JSON string, along with the author, a rating from 1-5, and a review with a short summary, 2 pros, 2 cons, and target audience.",
 		schemaJSON,
 		"You are a book critic. Respond only with valid JSON matching the schema.",
 	)
@@ -202,6 +196,66 @@ func nestedStructuredOutput() {
 	fmt.Println()
 }
 
+func persistentStructuredOutput() {
+	fmt.Println("=== Persistent Structured Output ===")
+	fmt.Println("Using NewClient() + WithOutputFormat() for session-scoped structured output.")
+	fmt.Println()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	client := codexsdk.NewClient()
+	defer client.Close()
+
+	if err := client.Start(ctx,
+		codexsdk.WithPermissionMode("bypassPermissions"),
+		codexsdk.WithSystemPrompt("Respond only with valid JSON matching the active schema."),
+		codexsdk.WithOutputFormat(map[string]any{
+			"type": "json_schema",
+			"schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"answer": map[string]any{"type": "string", "enum": []string{"four"}},
+				},
+				"required":             []string{"answer"},
+				"additionalProperties": false,
+			},
+		}),
+	); err != nil {
+		fmt.Printf("Error starting client: %v\n", err)
+
+		return
+	}
+
+	err := client.Query(ctx, "Return a JSON object with an answer field containing the string \"four\" for 2+2.")
+	if err != nil {
+		fmt.Printf("Error sending query: %v\n", err)
+
+		return
+	}
+
+	for msg, recvErr := range client.ReceiveResponse(ctx) {
+		if recvErr != nil {
+			fmt.Printf("Error receiving response: %v\n", recvErr)
+
+			return
+		}
+
+		if result, ok := msg.(*codexsdk.ResultMessage); ok {
+			if data, ok := decodeStructuredPayload(result.StructuredOutput, result.Result); ok {
+				formatted, marshalErr := json.MarshalIndent(data, "", "  ")
+				if marshalErr != nil {
+					fmt.Printf("Failed to format structured output: %v\n", marshalErr)
+				} else {
+					fmt.Printf("Structured output:\n%s\n\n", string(formatted))
+				}
+
+				return
+			}
+		}
+	}
+}
+
 func main() {
 	fmt.Println("Structured Output Examples")
 	fmt.Println()
@@ -210,4 +264,92 @@ func main() {
 
 	simpleStructuredOutput()
 	nestedStructuredOutput()
+	persistentStructuredOutput()
+}
+
+func decodeStructuredPayload(primary any, fallback *string) (json.RawMessage, bool) {
+	candidates := []any{primary}
+	if fallback != nil {
+		candidates = append(candidates, *fallback)
+	}
+
+	for _, candidate := range candidates {
+		normalized, ok := normalizeJSONCandidate(candidate)
+		if !ok {
+			continue
+		}
+
+		data, err := json.Marshal(normalized)
+		if err == nil {
+			return data, true
+		}
+	}
+
+	return nil, false
+}
+
+func normalizeJSONCandidate(candidate any) (any, bool) {
+	switch v := candidate.(type) {
+	case nil:
+		return nil, false
+	case json.RawMessage:
+		return normalizeJSONString(string(v))
+	case []byte:
+		return normalizeJSONString(string(v))
+	case string:
+		return normalizeJSONString(v)
+	default:
+		return canonicalizeJSONValue(v), true
+	}
+}
+
+func normalizeJSONString(raw string) (any, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !json.Valid([]byte(raw)) {
+		return nil, false
+	}
+
+	var parsed any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil, false
+	}
+
+	return canonicalizeJSONValue(parsed), true
+}
+
+func canonicalizeJSONValue(value any) any {
+	switch v := value.(type) {
+	case string:
+		if parsed, ok := normalizeJSONString(v); ok {
+			return parsed
+		}
+
+		return v
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = canonicalizeJSONValue(item)
+		}
+
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[key] = canonicalizeJSONValue(item)
+		}
+
+		if len(out) == 1 {
+			for key, item := range out {
+				if nested, ok := item.(map[string]any); ok && len(nested) == 1 {
+					if inner, ok := nested[key]; ok {
+						out[key] = inner
+					}
+				}
+			}
+		}
+
+		return out
+	default:
+		return v
+	}
 }

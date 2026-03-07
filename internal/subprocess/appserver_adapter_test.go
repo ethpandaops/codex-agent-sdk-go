@@ -152,12 +152,15 @@ func newTestAdapter(mock *mockAppServerRPC) *AppServerAdapter {
 	log := slog.Default()
 
 	adapter := &AppServerAdapter{
-		log:                log.With(slog.String("component", "appserver_adapter")),
-		inner:              mock,
-		messages:           make(chan map[string]any, 128),
-		errs:               make(chan error, 4),
-		done:               make(chan struct{}),
-		pendingRPCRequests: make(map[string]int64, 8),
+		log:                     log.With(slog.String("component", "appserver_adapter")),
+		inner:                   mock,
+		messages:                make(chan map[string]any, 128),
+		errs:                    make(chan error, 4),
+		done:                    make(chan struct{}),
+		pendingRPCRequests:      make(map[string]int64, 8),
+		lastAssistantTextByTurn: make(map[string]string, 8),
+		turnHasOutputSchema:     make(map[string]bool, 8),
+		sdkMCPServerNames:       make(map[string]struct{}, 8),
 	}
 
 	adapter.wg.Add(1)
@@ -919,12 +922,26 @@ func TestAppServerAdapter_NotificationTranslation(t *testing.T) {
 				"command": "ls",
 			},
 		},
+		{
+			name:         "item/completed with dynamicToolCall rewrites SDK MCP name",
+			method:       "item/completed",
+			params:       json.RawMessage(`{"item":{"id":"item3","type":"dynamicToolCall","tool":"sdkmcp__calc__add","arguments":{"a":15,"b":27}}}`),
+			expectedType: "item.completed",
+			checkItem:    true,
+			expectedFields: map[string]any{
+				"type": "dynamic_tool_call",
+				"tool": "mcp__calc__add",
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			mock := newMockAppServerRPC()
 			adapter := newTestAdapter(mock)
+			adapter.sdkMCPServerNames = map[string]struct{}{
+				"calc": {},
+			}
 
 			mock.notifyCh <- &RPCNotification{
 				JSONRPC: "2.0",
@@ -983,6 +1000,329 @@ func TestBuildInitializeRPC_DynamicToolsPassthrough(t *testing.T) {
 	require.True(t, ok, "dynamicTools should be passed through")
 	require.Len(t, passedTools, 1)
 	require.Equal(t, "add", passedTools[0]["name"])
+}
+
+func TestBuildInitializeRPC_ConvertsSDKMCPServersToDynamicTools(t *testing.T) {
+	requestData := map[string]any{
+		"subtype": "initialize",
+		"allowedTools": []string{
+			"mcp__calc__add",
+			"Bash",
+		},
+		"mcpServers": map[string]any{
+			"calc": map[string]any{
+				"type": "sdk",
+				"tools": []map[string]any{
+					{
+						"name":        "add",
+						"description": "Add two numbers",
+						"inputSchema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"a": map[string]any{"type": "number"},
+								"b": map[string]any{"type": "number"},
+							},
+							"required": []string{"a", "b"},
+						},
+					},
+				},
+			},
+			"remote": map[string]any{
+				"type":    "stdio",
+				"command": "remote-mcp",
+			},
+		},
+		"dynamicTools": []map[string]any{
+			{
+				"name":        "existing_tool",
+				"description": "Existing tool",
+				"inputSchema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
+	}
+
+	method, params, _, err := buildInitializeRPC(requestData)
+	require.NoError(t, err)
+	require.Equal(t, "thread/start", method)
+
+	passedServers, ok := params["mcpServers"].(map[string]any)
+	require.True(t, ok, "non-SDK mcpServers should be preserved")
+	require.Len(t, passedServers, 1)
+	require.Contains(t, passedServers, "remote")
+	require.NotContains(t, passedServers, "calc")
+
+	passedTools, ok := params["dynamicTools"].([]map[string]any)
+	require.True(t, ok, "SDK MCP tools should be converted to dynamicTools")
+	require.Len(t, passedTools, 2)
+	require.Equal(t, "existing_tool", passedTools[0]["name"])
+	require.Equal(t, "sdkmcp__calc__add", passedTools[1]["name"])
+	require.Equal(t, "Add two numbers", passedTools[1]["description"])
+
+	inputSchema, ok := passedTools[1]["inputSchema"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "object", inputSchema["type"])
+
+	allowedTools, ok := params["allowedTools"].([]string)
+	require.True(t, ok)
+	require.Equal(t, []string{"sdkmcp__calc__add", "Bash"}, allowedTools)
+}
+
+func TestBuildInitializeRPC_RejectsSDKMCPDynamicToolNameCollision(t *testing.T) {
+	requestData := map[string]any{
+		"subtype": "initialize",
+		"dynamicTools": []map[string]any{
+			{
+				"name":        "sdkmcp__calc__add",
+				"description": "User-defined tool that collides with generated SDK MCP name",
+				"inputSchema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
+		"mcpServers": map[string]any{
+			"calc": map[string]any{
+				"type": "sdk",
+				"tools": []map[string]any{
+					{
+						"name":        "add",
+						"description": "Add two numbers",
+						"inputSchema": map[string]any{
+							"type":       "object",
+							"properties": map[string]any{},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, _, _, err := buildInitializeRPC(requestData) //nolint:dogsled // testing requires all return values
+	require.Error(t, err, "SDK MCP-generated tool names should not be allowed to collide with user dynamic tools")
+	require.Contains(t, err.Error(), "sdkmcp__calc__add")
+}
+
+func TestAppServerAdapter_Initialize_MergesDynamicToolsAfterJSONRoundTrip(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	sendControlRequest(t, adapter, mock, "initialize", map[string]any{
+		"dynamicTools": []map[string]any{
+			{
+				"name":        "existing_tool",
+				"description": "Existing tool",
+				"inputSchema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
+		"mcpServers": map[string]any{
+			"calc": map[string]any{
+				"type": "sdk",
+				"tools": []map[string]any{
+					{
+						"name":        "add",
+						"description": "Add two numbers",
+						"inputSchema": map[string]any{
+							"type":       "object",
+							"properties": map[string]any{},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	calls := mock.getSentRequests()
+	require.Len(t, calls, 1)
+
+	params, ok := calls[0].Params.(map[string]any)
+	require.True(t, ok)
+
+	passedTools, ok := params["dynamicTools"].([]map[string]any)
+	require.True(t, ok, "dynamicTools should be merged after JSON round-trip")
+	require.Len(t, passedTools, 2)
+	require.Equal(t, "existing_tool", passedTools[0]["name"])
+	require.Equal(t, "sdkmcp__calc__add", passedTools[1]["name"])
+}
+
+func TestAppServerAdapter_Initialize_RewritesSDKMCPToolListsAfterJSONRoundTrip(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	sendControlRequest(t, adapter, mock, "initialize", map[string]any{
+		"allowedTools":    []string{"mcp__calc__add", "Bash"},
+		"disallowedTools": []string{"mcp__calc__subtract"},
+		"mcpServers": map[string]any{
+			"calc": map[string]any{
+				"type": "sdk",
+				"tools": []map[string]any{
+					{
+						"name":        "add",
+						"description": "Add two numbers",
+					},
+					{
+						"name":        "subtract",
+						"description": "Subtract two numbers",
+					},
+				},
+			},
+		},
+	})
+
+	calls := mock.getSentRequests()
+	require.Len(t, calls, 1)
+
+	params, ok := calls[0].Params.(map[string]any)
+	require.True(t, ok)
+
+	allowedTools, ok := params["allowedTools"].([]string)
+	require.True(t, ok, "allowedTools should be rewritten after JSON round-trip")
+	require.Equal(t, []string{"sdkmcp__calc__add", "Bash"}, allowedTools)
+
+	disallowedTools, ok := params["disallowedTools"].([]string)
+	require.True(t, ok, "disallowedTools should be rewritten after JSON round-trip")
+	require.Equal(t, []string{"sdkmcp__calc__subtract"}, disallowedTools)
+}
+
+func TestAppServerAdapter_Initialize_RewritesSDKMCPToolsListAfterJSONRoundTrip(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	sendControlRequest(t, adapter, mock, "initialize", map[string]any{
+		"tools": []string{"mcp__calc__add", "Bash"},
+		"mcpServers": map[string]any{
+			"calc": map[string]any{
+				"type": "sdk",
+				"tools": []map[string]any{
+					{
+						"name":        "add",
+						"description": "Add two numbers",
+					},
+				},
+			},
+		},
+	})
+
+	calls := mock.getSentRequests()
+	require.Len(t, calls, 1)
+
+	params, ok := calls[0].Params.(map[string]any)
+	require.True(t, ok)
+
+	tools, ok := params["tools"].([]string)
+	require.True(t, ok, "tools should be rewritten after JSON round-trip")
+	require.Equal(t, []string{"sdkmcp__calc__add", "Bash"}, tools)
+}
+
+func TestAppServerAdapter_HandleServerRequest_RewritesSDKMCPToolNames(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.sdkMCPServerNames = map[string]struct{}{
+		"calc": {},
+	}
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	mock.requestCh <- &RPCIncomingRequest{
+		JSONRPC: "2.0",
+		ID:      7,
+		Method:  "item_tool/call",
+		Params:  json.RawMessage(`{"tool":"sdkmcp__calc__add","arguments":{"a":15,"b":27}}`),
+	}
+
+	msg := receiveAdapterMessage(t, adapter)
+	require.Equal(t, "control_request", msg["type"])
+
+	req, ok := msg["request"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "item_tool_call", req["subtype"])
+	require.Equal(t, "mcp__calc__add", req["tool"])
+}
+
+func TestAppServerAdapter_HandleServerRequest_RewritesSDKMCPPermissionToolName(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.sdkMCPServerNames = map[string]struct{}{
+		"calc": {},
+	}
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	mock.requestCh <- &RPCIncomingRequest{
+		JSONRPC: "2.0",
+		ID:      8,
+		Method:  "can_use_tool",
+		Params:  json.RawMessage(`{"tool_name":"sdkmcp__calc__add","input":{"a":15,"b":27}}`),
+	}
+
+	msg := receiveAdapterMessage(t, adapter)
+	require.Equal(t, "control_request", msg["type"])
+
+	req, ok := msg["request"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "can_use_tool", req["subtype"])
+	require.Equal(t, "mcp__calc__add", req["tool_name"])
+}
+
+func TestAppServerAdapter_HandleServerRequest_PreservesPlainDynamicToolUsingSDKMCPPrefix(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	mock.requestCh <- &RPCIncomingRequest{
+		JSONRPC: "2.0",
+		ID:      9,
+		Method:  "item_tool/call",
+		Params:  json.RawMessage(`{"tool":"sdkmcp__plain_dynamic_tool","arguments":{"value":"secret"}}`),
+	}
+
+	msg := receiveAdapterMessage(t, adapter)
+	require.Equal(t, "control_request", msg["type"])
+
+	req, ok := msg["request"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "item_tool_call", req["subtype"])
+	require.Equal(t,
+		"sdkmcp__plain_dynamic_tool",
+		req["tool"],
+		"plain dynamic tools should keep their original name when no SDK MCP server generated this prefix",
+	)
 }
 
 func TestAppServerAdapter_InitializeFailFastUnsupportedOptions(t *testing.T) {
@@ -1090,6 +1430,283 @@ func TestAppServerAdapter_InitializeTurnOverrides(t *testing.T) {
 	require.Equal(t, "object", outputSchema["type"])
 }
 
+func TestAppServerAdapter_QueryOutputSchemaPerTurn(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	callCount := 0
+	mock.sendRequestFunc = func(
+		_ context.Context,
+		method string,
+		params any,
+	) (*RPCResponse, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			require.Equal(t, "thread/start", method)
+
+			return &RPCResponse{
+				JSONRPC: "2.0",
+				ID:      1,
+				Result:  json.RawMessage(`{"thread":{"id":"thread_1"}}`),
+			}, nil
+		case 2:
+			require.Equal(t, "turn/start", method)
+
+			return &RPCResponse{
+				JSONRPC: "2.0",
+				ID:      2,
+				Result:  json.RawMessage(`{"turnId":"turn_1"}`),
+			}, nil
+		default:
+			t.Fatalf("unexpected RPC call %d", callCount)
+
+			return &RPCResponse{}, nil
+		}
+	}
+
+	sendControlRequest(t, adapter, mock, "initialize", map[string]any{})
+
+	msg := receiveAdapterMessage(t, adapter)
+	require.Equal(t, "control_response", msg["type"])
+
+	userMsg := map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": "hello",
+		},
+		"outputSchema": map[string]any{
+			"type": "json_schema",
+			"schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"answer": map[string]any{"type": "string"},
+				},
+				"required": []string{"answer"},
+			},
+		},
+	}
+
+	data, err := json.Marshal(userMsg)
+	require.NoError(t, err)
+
+	err = adapter.SendMessage(context.Background(), data)
+	require.NoError(t, err)
+
+	calls := mock.getSentRequests()
+	require.Len(t, calls, 2)
+	require.Equal(t, "turn/start", calls[1].Method)
+
+	params, ok := calls[1].Params.(map[string]any)
+	require.True(t, ok)
+
+	outputSchema, ok := params["outputSchema"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "object", outputSchema["type"])
+}
+
+func TestAppServerAdapter_TurnCompleted_OverlappingTurnsKeepStructuredOutputPerTurn(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	callCount := 0
+	mock.sendRequestFunc = func(
+		_ context.Context,
+		method string,
+		params any,
+	) (*RPCResponse, error) {
+		callCount++
+
+		require.Equal(t, "turn/start", method)
+
+		return &RPCResponse{
+			JSONRPC: "2.0",
+			ID:      int64(callCount),
+			Result:  json.RawMessage([]byte(`{"turnId":"turn_` + string(rune('0'+callCount)) + `"}`)),
+		}, nil
+	}
+
+	firstTurn := map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": "return structured output",
+		},
+		"outputSchema": map[string]any{
+			"type": "json_schema",
+			"schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"answer": map[string]any{"type": "string"},
+				},
+				"required": []string{"answer"},
+			},
+		},
+	}
+
+	firstData, err := json.Marshal(firstTurn)
+	require.NoError(t, err)
+	require.NoError(t, adapter.SendMessage(context.Background(), firstData))
+
+	secondTurn := map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": "plain text is fine",
+		},
+	}
+
+	secondData, err := json.Marshal(secondTurn)
+	require.NoError(t, err)
+	require.NoError(t, adapter.SendMessage(context.Background(), secondData))
+
+	calls := mock.getSentRequests()
+	require.Len(t, calls, 2)
+
+	firstParams, ok := calls[0].Params.(map[string]any)
+	require.True(t, ok)
+
+	_, firstHasSchema := firstParams["outputSchema"]
+	require.True(t, firstHasSchema, "first turn should send an output schema")
+
+	secondParams, ok := calls[1].Params.(map[string]any)
+	require.True(t, ok)
+
+	_, secondHasSchema := secondParams["outputSchema"]
+	require.False(t, secondHasSchema, "second turn should not send an output schema")
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "turn/completed",
+		Params:  json.RawMessage(`{"turnId":"turn_1","result":"{\"answer\":\"4\"}"}`),
+	}
+
+	msg := receiveAdapterMessage(t, adapter)
+	require.Equal(t, "turn.completed", msg["type"])
+
+	structured, ok := msg["structured_output"].(map[string]any)
+	require.True(t, ok, "structured output should be keyed to the completing turn, not the most recently started turn")
+	require.Equal(t, "4", structured["answer"])
+}
+
+func TestAppServerAdapter_TurnCompleted_OverlappingTurnsDoNotReuseOtherTurnFallbackText(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	callCount := 0
+	mock.sendRequestFunc = func(
+		_ context.Context,
+		method string,
+		_ any,
+	) (*RPCResponse, error) {
+		callCount++
+
+		require.Equal(t, "turn/start", method)
+
+		return &RPCResponse{
+			JSONRPC: "2.0",
+			ID:      int64(callCount),
+			Result:  json.RawMessage([]byte(`{"turnId":"turn_` + string(rune('0'+callCount)) + `"}`)),
+		}, nil
+	}
+
+	firstTurn := map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": "return structured output",
+		},
+		"outputSchema": map[string]any{
+			"type": "json_schema",
+			"schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"answer": map[string]any{"type": "string"},
+				},
+				"required": []string{"answer"},
+			},
+		},
+	}
+
+	firstData, err := json.Marshal(firstTurn)
+	require.NoError(t, err)
+	require.NoError(t, adapter.SendMessage(context.Background(), firstData))
+
+	secondTurn := map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": "plain text is fine",
+		},
+	}
+
+	secondData, err := json.Marshal(secondTurn)
+	require.NoError(t, err)
+	require.NoError(t, adapter.SendMessage(context.Background(), secondData))
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/completed",
+		Params: json.RawMessage(`{
+			"item":{
+				"id":"item_assistant_turn_2",
+				"type":"agentMessage",
+				"text":"{\"answer\":\"from-turn-2\"}"
+			}
+		}`),
+	}
+
+	select {
+	case <-adapter.messages:
+	case <-time.After(time.Second):
+		t.Fatal("expected item.completed message")
+	}
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "turn/completed",
+		Params:  json.RawMessage(`{"turnId":"turn_1"}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		require.Equal(t, "turn.completed", msg["type"])
+
+		_, hasResult := msg["result"]
+		require.False(t,
+			hasResult,
+			"turn_1 should not inherit fallback text from turn_2 when turn_1 never emitted assistant text",
+		)
+
+		_, hasStructured := msg["structured_output"]
+		require.False(t,
+			hasStructured,
+			"turn_1 should not parse structured output from turn_2 fallback text",
+		)
+	case <-time.After(time.Second):
+		t.Fatal("expected turn.completed message")
+	}
+}
+
 func TestAppServerAdapter_ItemTypeMapping(t *testing.T) {
 	tests := []struct {
 		camelCase string
@@ -1097,6 +1714,7 @@ func TestAppServerAdapter_ItemTypeMapping(t *testing.T) {
 	}{
 		{"agentMessage", "agent_message"},
 		{"commandExecution", "command_execution"},
+		{"dynamicToolCall", "dynamic_tool_call"},
 		{"fileChange", "file_change"},
 		{"mcpToolCall", "mcp_tool_call"},
 		{"webSearch", "web_search"},
@@ -1556,6 +2174,118 @@ func TestAppServerAdapter_TurnCompleted_ResultFallbackFromAssistantText(t *testi
 	case <-time.After(time.Second):
 		t.Fatal("expected turn.completed with result fallback")
 	}
+}
+
+func TestAppServerAdapter_TurnCompleted_StructuredOutputFallbackFromAssistantText(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.currentTurnHasOutputSchema = true
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/completed",
+		Params: json.RawMessage(`{
+			"item":{
+				"id":"item_assistant_1",
+				"type":"agentMessage",
+				"text":"{\"answer\":\"4\"}"
+			}
+		}`),
+	}
+
+	select {
+	case <-adapter.messages:
+	case <-time.After(time.Second):
+		t.Fatal("expected item.completed message")
+	}
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "turn/completed",
+		Params:  json.RawMessage(`{}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		require.Equal(t, "turn.completed", msg["type"])
+		require.Equal(t, "{\"answer\":\"4\"}", msg["result"])
+
+		structured, ok := msg["structured_output"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "4", structured["answer"])
+	case <-time.After(time.Second):
+		t.Fatal("expected turn.completed with structured_output fallback")
+	}
+}
+
+func TestAppServerAdapter_TurnCompleted_StructuredOutputFromResult(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.currentTurnHasOutputSchema = true
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "turn/completed",
+		Params:  json.RawMessage(`{"result":"{\"answer\":\"4\"}"}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		require.Equal(t, "turn.completed", msg["type"])
+		require.Equal(t, "{\"answer\":\"4\"}", msg["result"])
+
+		structured, ok := msg["structured_output"].(map[string]any)
+		require.True(t, ok, "expected structured_output alongside JSON result")
+		require.Equal(t, "4", structured["answer"])
+	case <-time.After(time.Second):
+		t.Fatal("expected turn.completed with structured_output parsed from result")
+	}
+}
+
+func TestAppServerAdapter_TurnFailed_ClearsTurnScopedOutputSchemaState(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	adapter.mu.Lock()
+	adapter.turnHasOutputSchema["turn_1"] = true
+	adapter.mu.Unlock()
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "turn/failed",
+		Params:  json.RawMessage(`{"turnId":"turn_1","error":"boom"}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		require.Equal(t, "turn.failed", msg["type"])
+	case <-time.After(time.Second):
+		t.Fatal("expected turn.failed message")
+	}
+
+	adapter.mu.Lock()
+	_, exists := adapter.turnHasOutputSchema["turn_1"]
+	adapter.mu.Unlock()
+
+	require.False(t, exists, "failed turns should not leave turn-scoped output schema state behind")
 }
 
 func TestAppServerAdapter_TokenUsageEmitsSystem(t *testing.T) {

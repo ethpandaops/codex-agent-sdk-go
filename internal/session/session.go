@@ -11,7 +11,7 @@ import (
 	"time"
 
 	sdkerrors "github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
-	_ "modernc.org/sqlite"
+	_ "github.com/glebarez/go-sqlite"
 )
 
 // databaseFile is the name of the Codex state database.
@@ -19,8 +19,7 @@ const databaseFile = "state_5.sqlite"
 
 // sqliteDriverName is the database/sql driver name used to open
 // SQLite databases. The caller must ensure a compatible driver is
-// registered under this name (e.g. modernc.org/sqlite or
-// glebarez/go-sqlite via blank import).
+// registered under this name (e.g. glebarez/go-sqlite via blank import).
 const sqliteDriverName = "sqlite"
 
 // ThreadRow represents a row from the Codex threads table.

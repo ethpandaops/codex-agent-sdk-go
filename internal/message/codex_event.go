@@ -65,6 +65,8 @@ const (
 	ItemTypeFileChange ItemType = "file_change"
 	// ItemTypeMCPToolCall is a Model Context Protocol tool invocation.
 	ItemTypeMCPToolCall ItemType = "mcp_tool_call"
+	// ItemTypeDynamicToolCall is an SDK dynamic tool invocation.
+	ItemTypeDynamicToolCall ItemType = "dynamic_tool_call"
 	// ItemTypeWebSearch is a web search operation.
 	ItemTypeWebSearch ItemType = "web_search"
 	// ItemTypeTodoList is a todo list update.
@@ -95,6 +97,12 @@ type CodexItem struct {
 	// mcp_tool_call
 	Server string `json:"server,omitempty"`
 	Tool   string `json:"tool,omitempty"`
+
+	// dynamic_tool_call
+	Name         string         `json:"name,omitempty"`
+	Arguments    map[string]any `json:"arguments,omitempty"`
+	ContentItems []ContentItem  `json:"contentItems,omitempty"`
+	Success      *bool          `json:"success,omitempty"`
 
 	// web_search
 	Query string `json:"query,omitempty"`
@@ -144,6 +152,34 @@ func (f *FileChange) UnmarshalJSON(data []byte) error {
 type TodoItem struct {
 	Text      string `json:"text"`
 	Completed bool   `json:"completed"`
+}
+
+// ContentItem represents a tool result content item from app-server.
+type ContentItem struct {
+	Type string         `json:"type"`
+	Text string         `json:"text,omitempty"`
+	Raw  map[string]any `json:"-"`
+}
+
+// UnmarshalJSON preserves the full content item payload so non-text tool
+// results can be surfaced without losing fields.
+func (c *ContentItem) UnmarshalJSON(data []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	c.Raw = raw
+
+	if typ, ok := raw["type"].(string); ok {
+		c.Type = typ
+	}
+
+	if text, ok := raw["text"].(string); ok {
+		c.Text = text
+	}
+
+	return nil
 }
 
 // CodexUsage contains token consumption metrics from Codex.

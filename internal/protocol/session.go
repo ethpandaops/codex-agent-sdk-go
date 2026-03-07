@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -698,6 +699,7 @@ func (s *Session) HandleCanUseTool(
 	}
 
 	toolName, _ := req.Request["tool_name"].(string)
+	toolName = s.normalizePermissionToolName(toolName)
 	input, _ := req.Request["input"].(map[string]any)
 
 	// Normalize command approval requests into the public tool callback shape.
@@ -764,4 +766,26 @@ func (s *Session) HandleCanUseTool(
 			decision,
 		)
 	}
+}
+
+func (s *Session) normalizePermissionToolName(toolName string) string {
+	const sdkMCPPrefix = "sdkmcp__"
+
+	if !strings.HasPrefix(toolName, sdkMCPPrefix) {
+		return toolName
+	}
+
+	rest := strings.TrimPrefix(toolName, sdkMCPPrefix)
+
+	idx := strings.Index(rest, "__")
+	if idx <= 0 {
+		return toolName
+	}
+
+	serverName := rest[:idx]
+	if _, ok := s.sdkMcpServers[serverName]; !ok {
+		return toolName
+	}
+
+	return "mcp__" + rest
 }

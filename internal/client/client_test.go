@@ -21,6 +21,7 @@ type mockTransport struct {
 	closed   bool
 	messages chan map[string]any
 	errors   chan error
+	sent     []map[string]any
 }
 
 func newMockTransport() *mockTransport {
@@ -47,11 +48,12 @@ func (m *mockTransport) SendMessage(_ context.Context, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Parse the message to check if it's an init request
 	var msg map[string]any
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return nil
 	}
+
+	m.sent = append(m.sent, msg)
 
 	// Auto-respond to control_request for initialize
 	if msgType, _ := msg["type"].(string); msgType == "control_request" {

@@ -9,9 +9,8 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/glebarez/go-sqlite"
 	"github.com/stretchr/testify/require"
-
-	_ "modernc.org/sqlite"
 )
 
 const testCreateThreadsTable = `CREATE TABLE threads (

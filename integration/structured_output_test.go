@@ -175,3 +175,106 @@ func TestStructuredOutput_WithEnum(t *testing.T) {
 
 	require.True(t, receivedResponse, "Should receive structured response with enum values")
 }
+
+// TestClientStructuredOutput_StartWithOutputFormat verifies session-scoped structured
+// output works through the persistent client API.
+func TestClientStructuredOutput_StartWithOutputFormat(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	client := codexsdk.NewClient()
+	defer client.Close()
+
+	err := client.Start(ctx,
+		codexsdk.WithPermissionMode("bypassPermissions"),
+		codexsdk.WithOutputFormat(map[string]any{
+			"type": "json_schema",
+			"schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"answer": map[string]any{"type": "string"},
+				},
+				"required":             []string{"answer"},
+				"additionalProperties": false,
+			},
+		}),
+	)
+	if err != nil {
+		skipIfCLINotInstalled(t, err)
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	err = client.Query(ctx, "What is 2+2? Provide structured output.")
+	require.NoError(t, err)
+
+	var receivedResponse bool
+
+	for msg, recvErr := range client.ReceiveResponse(ctx) {
+		if recvErr != nil {
+			t.Fatalf("ReceiveResponse failed: %v", recvErr)
+		}
+
+		if result, ok := msg.(*codexsdk.ResultMessage); ok {
+			require.False(t, result.IsError)
+
+			if result.StructuredOutput != nil {
+				receivedResponse = true
+			} else if result.Result != nil && *result.Result != "" {
+				receivedResponse = true
+			}
+		}
+	}
+
+	require.True(t, receivedResponse, "Should receive structured response from persistent client")
+}
+
+func TestClientStructuredOutput_StartWithOutputFormat_ParsesStructuredOutput(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	client := codexsdk.NewClient()
+	defer client.Close()
+
+	err := client.Start(ctx,
+		codexsdk.WithPermissionMode("bypassPermissions"),
+		codexsdk.WithOutputFormat(map[string]any{
+			"type": "json_schema",
+			"schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"answer": map[string]any{"type": "string", "enum": []string{"4"}},
+				},
+				"required":             []string{"answer"},
+				"additionalProperties": false,
+			},
+		}),
+	)
+	if err != nil {
+		skipIfCLINotInstalled(t, err)
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	err = client.Query(ctx, "What is 2+2? Return a JSON object with answer set to the string \"4\".")
+	require.NoError(t, err)
+
+	for msg, recvErr := range client.ReceiveResponse(ctx) {
+		if recvErr != nil {
+			t.Fatalf("ReceiveResponse failed: %v", recvErr)
+		}
+
+		result, ok := msg.(*codexsdk.ResultMessage)
+		if !ok {
+			continue
+		}
+
+		require.False(t, result.IsError)
+
+		structured, ok := result.StructuredOutput.(map[string]any)
+		require.True(t, ok, "expected parsed structured output on ResultMessage")
+		require.Equal(t, "4", structured["answer"])
+
+		return
+	}
+
+	t.Fatal("expected ResultMessage with structured output")
+}
