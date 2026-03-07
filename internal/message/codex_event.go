@@ -171,8 +171,8 @@ func (c *ContentItem) UnmarshalJSON(data []byte) error {
 
 	c.Raw = raw
 
-	if typ, ok := raw["type"].(string); ok {
-		c.Type = typ
+	if contentType, ok := raw["type"].(string); ok {
+		c.Type = contentType
 	}
 
 	if text, ok := raw["text"].(string); ok {
