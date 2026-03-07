@@ -18,6 +18,8 @@ import (
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 )
 
+const msgTypeControlRequest = "control_request"
+
 func TestQueryCLINotFound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -751,7 +753,7 @@ func (f *failingTransport) SendMessage(_ context.Context, data []byte) error {
 	// Parse the message to check if it's a control_request that needs a response.
 	var msg map[string]any
 	if err := json.Unmarshal(data, &msg); err == nil {
-		if msgType, ok := msg["type"].(string); ok && msgType == "control_request" {
+		if msgType, ok := msg["type"].(string); ok && msgType == msgTypeControlRequest {
 			if requestID, ok := msg["request_id"].(string); ok {
 				// Send a success response asynchronously.
 				go func() {
@@ -795,6 +797,138 @@ func (f *failingTransport) EndInput() error {
 // Compile-time check that failingTransport implements config.Transport.
 var _ config.Transport = (*failingTransport)(nil)
 
+// stickyResultTransport emits a ResultMessage after input is closed but keeps
+// the transport open until Close() or context cancellation. This characterizes
+// Query behavior when a final result arrives before transport EOF.
+type stickyResultTransport struct {
+	mu      sync.Mutex
+	msgChan chan map[string]any
+	errChan chan error
+	ready   chan struct{}
+	msg     map[string]any
+	started bool
+	closed  bool
+}
+
+func newStickyResultTransport(msg map[string]any) *stickyResultTransport {
+	return &stickyResultTransport{
+		msgChan: make(chan map[string]any, 16),
+		errChan: make(chan error, 1),
+		ready:   make(chan struct{}),
+		msg:     msg,
+	}
+}
+
+func (s *stickyResultTransport) Start(_ context.Context) error {
+	s.mu.Lock()
+	if s.started {
+		s.mu.Unlock()
+
+		return nil
+	}
+
+	s.started = true
+	msg := s.msg
+	s.mu.Unlock()
+
+	go func() {
+		<-s.ready
+
+		s.msgChan <- msg
+	}()
+
+	return nil
+}
+
+func (s *stickyResultTransport) ReadMessages(_ context.Context) (<-chan map[string]any, <-chan error) {
+	return s.msgChan, s.errChan
+}
+
+func (s *stickyResultTransport) SendMessage(_ context.Context, data []byte) error {
+	var msg map[string]any
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return nil
+	}
+
+	msgType, _ := msg["type"].(string)
+	if msgType != msgTypeControlRequest {
+		s.release()
+
+		return nil
+	}
+
+	requestID, _ := msg["request_id"].(string)
+	request, _ := msg["request"].(map[string]any)
+	subtype, _ := request["subtype"].(string)
+
+	payload := map[string]any{}
+	if subtype == "initialize" {
+		payload = map[string]any{
+			"protocol_version": "1.0",
+			"server_info": map[string]any{
+				"name":    "test-server",
+				"version": "1.0.0",
+			},
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil
+	}
+
+	s.msgChan <- map[string]any{
+		"type": "control_response",
+		"response": map[string]any{
+			"request_id": requestID,
+			"subtype":    "success",
+			"response":   payload,
+		},
+	}
+
+	return nil
+}
+
+func (s *stickyResultTransport) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil
+	}
+
+	s.closed = true
+	close(s.msgChan)
+	close(s.errChan)
+
+	return nil
+}
+
+func (s *stickyResultTransport) IsReady() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.started && !s.closed
+}
+
+func (s *stickyResultTransport) EndInput() error {
+	s.release()
+
+	return nil
+}
+
+func (s *stickyResultTransport) release() {
+	select {
+	case <-s.ready:
+	default:
+		close(s.ready)
+	}
+}
+
+var _ config.Transport = (*stickyResultTransport)(nil)
+
 // resultMessageTransport is a mock transport that successfully initializes and
 // emits a ResultMessage while keeping channels open. This verifies that
 // QueryStream stops at ResultMessage instead of waiting for context cancellation.
@@ -827,7 +961,7 @@ func (t *resultMessageTransport) SendMessage(_ context.Context, data []byte) err
 		return err
 	}
 
-	if msgType, ok := msg["type"].(string); ok && msgType == "control_request" {
+	if msgType, ok := msg["type"].(string); ok && msgType == msgTypeControlRequest {
 		requestID, _ := msg["request_id"].(string)
 		if requestID == "" {
 			return nil
@@ -924,6 +1058,54 @@ func TestQueryStream_StreamInputError_Propagated(t *testing.T) {
 	require.Error(t, receivedError, "Error from streamInputMessages should be propagated")
 	require.Contains(t, receivedError.Error(), "simulated transport send failure",
 		"Error message should contain the original transport error")
+}
+
+func TestQuery_ReturnsImmediatelyAfterResultAndClosesTransport(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resultText := "final answer before transport EOF"
+	transport := newStickyResultTransport(map[string]any{
+		"type":       "result",
+		"subtype":    "success",
+		"is_error":   false,
+		"session_id": "session-test",
+		"result":     resultText,
+	})
+
+	resultSeen := make(chan *ResultMessage, 1)
+	iteratorDone := make(chan struct{})
+
+	go func() {
+		defer close(iteratorDone)
+
+		for msg, err := range Query(ctx, "test", WithTransport(transport)) {
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+
+				return
+			}
+
+			if result, ok := msg.(*ResultMessage); ok {
+				resultSeen <- result
+			}
+		}
+	}()
+
+	select {
+	case result := <-resultSeen:
+		require.NotNil(t, result)
+		require.NotNil(t, result.Result)
+		require.Equal(t, resultText, *result.Result)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ResultMessage")
+	}
+
+	select {
+	case <-iteratorDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Query iterator to stop after ResultMessage")
+	}
 }
 
 // TestQueryStream_StopsAtResultMessage verifies QueryStream returns immediately

@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"sync"
 	"sync/atomic"
@@ -35,6 +37,8 @@ type AppServerTransport struct {
 	notifyCh  chan *RPCNotification
 	requestCh chan *RPCIncomingRequest
 	readDone  chan struct{}
+	closeOnce sync.Once
+	closeCh   chan struct{}
 }
 
 // NewAppServerTransport creates a new app server transport.
@@ -46,6 +50,7 @@ func NewAppServerTransport(log *slog.Logger, opts *config.Options) *AppServerTra
 		notifyCh:  make(chan *RPCNotification, 128),
 		requestCh: make(chan *RPCIncomingRequest, 32),
 		readDone:  make(chan struct{}),
+		closeCh:   make(chan struct{}),
 	}
 }
 
@@ -72,6 +77,7 @@ func (t *AppServerTransport) Start(ctx context.Context) error {
 
 	t.cmd = exec.CommandContext(ctx, path, args...)
 	t.cmd.Env = cli.BuildEnvironment(t.opts)
+	configureProcessGroup(t.cmd)
 
 	if t.opts.Cwd != "" {
 		t.cmd.Dir = t.opts.Cwd
@@ -100,6 +106,7 @@ func (t *AppServerTransport) Start(ctx context.Context) error {
 	t.log.InfoContext(ctx, "codex app-server started",
 		slog.Int("pid", t.cmd.Process.Pid),
 	)
+	t.watchContextCancellation(ctx)
 
 	go t.readLoop()
 
@@ -247,32 +254,60 @@ func (t *AppServerTransport) IsReady() bool {
 	return t.ready
 }
 
+func (t *AppServerTransport) watchContextCancellation(ctx context.Context) {
+	if ctx == nil || t.closeCh == nil {
+		return
+	}
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			t.log.Debug("context cancelled, terminating codex app-server process tree",
+				slog.Any("error", ctx.Err()),
+			)
+
+			if err := t.Close(); err != nil && !stderrors.Is(err, os.ErrProcessDone) {
+				t.log.Debug("failed to terminate codex app-server process tree after context cancellation",
+					slog.Any("error", err),
+				)
+			}
+		case <-t.closeCh:
+		}
+	}()
+}
+
 // Close terminates the app server subprocess.
 func (t *AppServerTransport) Close() error {
-	t.mu.Lock()
-	if t.closing {
+	var closeErr error
+
+	t.closeOnce.Do(func() {
+		t.mu.Lock()
+		t.closing = true
+		stdin := t.stdin
+		t.stdin = nil
+		cmd := t.cmd
+		closeCh := t.closeCh
 		t.mu.Unlock()
 
-		return nil
-	}
+		if closeCh != nil {
+			close(closeCh)
+		}
 
-	t.closing = true
-	t.mu.Unlock()
+		if stdin != nil {
+			_ = stdin.Close()
+		}
 
-	if t.stdin != nil {
-		_ = t.stdin.Close()
-	}
+		if cmd != nil && cmd.Process != nil {
+			t.log.Debug("killing codex app-server process tree",
+				slog.Int("pid", cmd.Process.Pid),
+			)
 
-	if t.cmd != nil && t.cmd.Process != nil {
-		t.log.Debug("killing codex app-server process",
-			slog.Int("pid", t.cmd.Process.Pid),
-		)
+			closeErr = killProcessTree(cmd)
+			_ = cmd.Wait()
+		}
+	})
 
-		_ = t.cmd.Process.Kill()
-		_ = t.cmd.Wait()
-	}
-
-	return nil
+	return closeErr
 }
 
 // writeMessage marshals and writes a JSON-RPC message to stdin.
