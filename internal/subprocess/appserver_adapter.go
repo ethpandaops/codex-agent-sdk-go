@@ -8,6 +8,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	sdkerrors "github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
@@ -72,6 +73,10 @@ type AppServerAdapter struct {
 	// for server-to-client requests (hooks/MCP).
 	pendingRPCRequests map[string]int64
 	sdkMCPServerNames  map[string]struct{}
+
+	// messagesClosed is set before closing the messages channel so that
+	// senders on other goroutines can avoid a send-on-closed-channel panic.
+	messagesClosed atomic.Bool
 
 	wg sync.WaitGroup
 }
@@ -1408,7 +1413,10 @@ func (a *AppServerAdapter) handleUserMessage(
 // translates them into exec-event format messages.
 func (a *AppServerAdapter) readLoop() {
 	defer a.wg.Done()
-	defer close(a.messages)
+	defer func() {
+		a.messagesClosed.Store(true)
+		close(a.messages)
+	}()
 	defer close(a.errs)
 
 	notifications := a.inner.Notifications()
@@ -2268,6 +2276,21 @@ func (a *AppServerAdapter) injectControlResponse(
 	requestID string,
 	responseData map[string]any,
 ) {
+	// Guard against sending on a closed channel. The readLoop goroutine
+	// closes a.messages when the inner transport shuts down, which can
+	// race with control-request handlers still running on other goroutines.
+	// The atomic check handles the common case; the recover covers the
+	// narrow window between the check and the send.
+	if a.messagesClosed.Load() {
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			a.log.Debug("inject suppressed: messages channel closed during shutdown")
+		}
+	}()
+
 	msg := map[string]any{
 		"type":     "control_response",
 		"response": responseData,
