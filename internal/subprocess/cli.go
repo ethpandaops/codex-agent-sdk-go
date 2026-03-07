@@ -44,6 +44,8 @@ type CLITransport struct {
 	isStreaming    bool
 	closing        bool
 	stdinClosed    bool
+	closeOnce      sync.Once
+	closeCh        chan struct{}
 }
 
 // Compile-time verification that CLITransport implements the Transport interface.
@@ -75,6 +77,7 @@ func NewCLITransportWithMode(
 		prompt:         prompt,
 		stderrCallback: options.Stderr,
 		isStreaming:    isStreaming,
+		closeCh:        make(chan struct{}),
 	}
 }
 
@@ -118,6 +121,7 @@ func (t *CLITransport) Start(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, t.cliPath, t.args...)
 	cmd.Dir = t.cwd
 	cmd.Env = t.env
+	configureProcessGroup(cmd)
 
 	// Set up stdin pipe
 	stdin, err := cmd.StdinPipe()
@@ -149,8 +153,27 @@ func (t *CLITransport) Start(ctx context.Context) error {
 
 	t.cmd = cmd
 	t.log.InfoContext(ctx, "Codex CLI subprocess started", slog.Int("pid", cmd.Process.Pid))
+	t.watchContextCancellation(ctx)
 
 	return nil
+}
+
+func (t *CLITransport) watchContextCancellation(ctx context.Context) {
+	if ctx == nil || t.closeCh == nil {
+		return
+	}
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			t.log.Debug("Context cancelled, terminating Codex CLI process tree", "error", ctx.Err())
+
+			if err := t.Close(); err != nil && !stderrors.Is(err, os.ErrProcessDone) {
+				t.log.Debug("Failed to terminate Codex CLI process tree after context cancellation", "error", err)
+			}
+		case <-t.closeCh:
+		}
+	}()
 }
 
 // ReadMessages reads JSON messages from the CLI stdout.
@@ -410,21 +433,35 @@ func (t *CLITransport) CloseStdin() error {
 
 // Close terminates the CLI process.
 func (t *CLITransport) Close() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	var closeErr error
 
-	t.closing = true
-	t.stdinClosed = true
+	t.closeOnce.Do(func() {
+		t.mu.Lock()
+		t.closing = true
+		t.stdinClosed = true
 
-	if t.cmd != nil && t.cmd.Process != nil {
-		t.log.Debug("Killing CLI process", "pid", t.cmd.Process.Pid)
+		stdin := t.stdin
+		t.stdin = nil
 
-		if err := t.cmd.Process.Kill(); err != nil {
-			return fmt.Errorf("kill CLI process (pid %d): %w", t.cmd.Process.Pid, err)
+		cmd := t.cmd
+		closeCh := t.closeCh
+		t.mu.Unlock()
+
+		if closeCh != nil {
+			close(closeCh)
 		}
-	}
 
-	return nil
+		if stdin != nil {
+			_ = stdin.Close()
+		}
+
+		if cmd != nil && cmd.Process != nil {
+			t.log.Debug("Killing Codex CLI process tree", "pid", cmd.Process.Pid)
+			closeErr = killProcessTree(cmd)
+		}
+	})
+
+	return closeErr
 }
 
 // cleanStderr parses and cleans stderr output from the CLI.

@@ -296,12 +296,10 @@ func Query(
 					return
 				}
 
-				if useAppServerQuery {
-					if _, isResult := parsed.(*message.ResultMessage); isResult {
-						log.Debug("result message received, stopping iteration in app-server query mode")
+				if _, isResult := parsed.(*message.ResultMessage); isResult {
+					log.Debug("result message received, stopping query iteration")
 
-						return
-					}
+					return
 				}
 
 			case <-controller.Done():
