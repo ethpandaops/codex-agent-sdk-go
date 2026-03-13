@@ -26,9 +26,9 @@ func (c *clientWrapper) Start(ctx context.Context, opts ...Option) error {
 	return c.impl.Start(ctx, applyAgentOptions(opts))
 }
 
-// StartWithPrompt establishes a connection and immediately sends an initial prompt.
-func (c *clientWrapper) StartWithPrompt(ctx context.Context, prompt string, opts ...Option) error {
-	return c.impl.StartWithPrompt(ctx, prompt, applyAgentOptions(opts))
+// StartWithContent establishes a connection and immediately sends an initial message.
+func (c *clientWrapper) StartWithContent(ctx context.Context, content UserMessageContent, opts ...Option) error {
+	return c.impl.StartWithContent(ctx, content, applyAgentOptions(opts))
 }
 
 // StartWithStream establishes a connection and streams initial messages.
@@ -48,9 +48,9 @@ func (c *clientWrapper) StartWithStream(
 	return c.impl.StartWithStream(ctx, convertedMessages, applyAgentOptions(opts))
 }
 
-// Query sends a user prompt to the agent.
-func (c *clientWrapper) Query(ctx context.Context, prompt string, sessionID ...string) error {
-	return c.impl.Query(ctx, prompt, sessionID...)
+// Query sends user content to the agent.
+func (c *clientWrapper) Query(ctx context.Context, content UserMessageContent, sessionID ...string) error {
+	return c.impl.Query(ctx, content, sessionID...)
 }
 
 // ReceiveMessages returns an iterator that yields messages indefinitely.

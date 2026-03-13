@@ -16,7 +16,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	for msg, err := range codexsdk.Query(ctx, "Hello, Codex!") {
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Hello, Codex!")) {
 		if err != nil {
 			fmt.Printf("Query failed: %v\n", err)
 

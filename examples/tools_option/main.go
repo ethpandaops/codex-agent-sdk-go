@@ -104,7 +104,7 @@ func toolsArrayExample() {
 		return
 	}
 
-	if err := client.Query(ctx, "List your currently available tools briefly."); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("List your currently available tools briefly.")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -160,7 +160,7 @@ func toolsSingleToolExample() {
 		return
 	}
 
-	if err := client.Query(ctx, "List your currently available tools briefly."); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("List your currently available tools briefly.")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -216,7 +216,7 @@ func toolsPresetExample() {
 		return
 	}
 
-	if err := client.Query(ctx, "List your currently available tools briefly."); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("List your currently available tools briefly.")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return

@@ -66,7 +66,7 @@ func runEffortExample(title string, effort codexsdk.Effort, prompt string) {
 	fmt.Printf("Prompt: %s\n", prompt)
 	fmt.Println(strings.Repeat("-", 60))
 
-	if err := client.Query(ctx, prompt); err != nil {
+	if err := client.Query(ctx, codexsdk.Text(prompt)); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -114,7 +114,7 @@ func runStreamingEffortExample() {
 	fmt.Printf("Prompt: %s\n", prompt)
 	fmt.Println(strings.Repeat("-", 60))
 
-	if err := client.Query(ctx, prompt); err != nil {
+	if err := client.Query(ctx, codexsdk.Text(prompt)); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return

@@ -34,7 +34,7 @@ func TestSessionPersistence_ListAndReadMessages(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	err = client.Query(ctx, "Reply with the single word persistence.")
+	err = client.Query(ctx, codexsdk.Text("Reply with the single word persistence."))
 	require.NoError(t, err)
 
 	for msg, err := range client.ReceiveResponse(ctx) {

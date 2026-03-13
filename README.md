@@ -42,7 +42,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	for msg, err := range codexsdk.Query(ctx, "What is 2 + 2?") {
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("What is 2 + 2?")) {
 		if err != nil {
 			fmt.Printf("query error: %v\n", err)
 			return
@@ -57,12 +57,15 @@ func main() {
 			}
 		case *codexsdk.ResultMessage:
 			if m.Usage != nil {
-			fmt.Printf("done — %d input, %d output tokens\n", m.Usage.InputTokens, m.Usage.OutputTokens)
-		}
+				fmt.Printf("done - %d input, %d output tokens\n", m.Usage.InputTokens, m.Usage.OutputTokens)
+			}
 		}
 	}
 }
 ```
+
+`Query()` accepts `UserMessageContent`.
+Use `Text(...)` for plain prompts and `Blocks(...)` for structured multimodal input.
 
 ### Multi-turn client
 
@@ -81,7 +84,7 @@ if err := client.Start(ctx,
 	return err
 }
 
-if err := client.Query(ctx, "What's the capital of France?"); err != nil {
+if err := client.Query(ctx, codexsdk.Text("What's the capital of France?")); err != nil {
 	return err
 }
 for msg, err := range client.ReceiveResponse(ctx) {
@@ -91,7 +94,7 @@ for msg, err := range client.ReceiveResponse(ctx) {
 	_ = msg
 }
 
-if err := client.Query(ctx, "What's the population of that city?"); err != nil {
+if err := client.Query(ctx, codexsdk.Text("What's the population of that city?")); err != nil {
 	return err
 }
 for msg, err := range client.ReceiveResponse(ctx) {
@@ -106,7 +109,7 @@ for msg, err := range client.ReceiveResponse(ctx) {
 
 ```go
 err := codexsdk.WithClient(ctx, func(c codexsdk.Client) error {
-	if err := c.Query(ctx, "Hello Codex"); err != nil {
+	if err := c.Query(ctx, codexsdk.Text("Hello Codex")); err != nil {
 		return err
 	}
 
@@ -133,7 +136,7 @@ if err != nil {
 
 | API | Description |
 |---|---|
-| `Query(ctx, prompt, opts...)` | One-shot query returning `iter.Seq2[Message, error]` |
+| `Query(ctx, content, opts...)` | One-shot query returning `iter.Seq2[Message, error]` |
 | `QueryStream(ctx, messages, opts...)` | Streams `StreamingMessage` input and yields `Message` output |
 | `ListModels(ctx, opts...)` | Returns the complete discovered model list across all CLI pages |
 | `ListModelsResponse(ctx, opts...)` | Returns the complete discovered model-list payload across all CLI pages |
@@ -148,9 +151,9 @@ if err != nil {
 | Method | Description |
 |---|---|
 | `Start(ctx, opts...)` | Connect and initialize a session |
-| `StartWithPrompt(ctx, prompt, opts...)` | Start and immediately send first prompt |
+| `StartWithContent(ctx, content, opts...)` | Start and immediately send first message |
 | `StartWithStream(ctx, messages, opts...)` | Start and immediately stream input messages |
-| `Query(ctx, prompt, sessionID...)` | Send a user turn |
+| `Query(ctx, content, sessionID...)` | Send a user turn |
 | `ReceiveResponse(ctx)` | Read messages until `ResultMessage` |
 | `ReceiveMessages(ctx)` | Continuous message stream |
 | `Interrupt(ctx)` | Stop in-flight generation |
@@ -165,7 +168,7 @@ if err != nil {
 ### Message and content types
 
 - Message types: `AssistantMessage`, `UserMessage`, `SystemMessage`, `TaskStartedMessage`, `TaskCompleteMessage`, `ThreadRolledBackMessage`, `ResultMessage`, `StreamEvent`
-- Content blocks: `TextBlock`, `ThinkingBlock`, `ToolUseBlock`, `ToolResultBlock`
+- Content blocks: `TextBlock`, `InputImageBlock`, `InputLocalImageBlock`, `InputMentionBlock`, `ThinkingBlock`, `ToolUseBlock`, `ToolResultBlock`, `UnknownBlock`
 
 `GetSessionMessages` returns the typed persisted rollout events as recorded on disk. Task lifecycle records remain `TaskStartedMessage` and `TaskCompleteMessage`; they are not converted into `ResultMessage`.
 
@@ -180,10 +183,50 @@ if err != nil {
 
 | Helper | Description |
 |---|---|
+| `Text(text)` | Text-only `UserMessageContent` |
+| `Blocks(blocks...)` | Block-based `UserMessageContent` |
+| `TextInput(text)` | Text content block |
+| `ImageInput(url)` | App-server image block using a URL or data URL |
+| `ImageFileInput(path)` | Local image-path block for app-server / exec conversion |
+| `PathInput(path)` | Local file/path mention block |
 | `SingleMessage(content)` | Single-message input stream |
 | `MessagesFromSlice(msgs)` | Stream from `[]StreamingMessage` |
 | `MessagesFromChannel(ch)` | Stream from channel |
 | `NewUserMessage(content)` | Convenience `StreamingMessage` constructor |
+
+## Multimodal Input
+
+Codex content can be expressed as plain text or structured blocks.
+
+```go
+content := codexsdk.Blocks(
+	codexsdk.TextInput("Summarize these local inputs."),
+	codexsdk.PathInput("/absolute/path/to/spec.pdf"),
+	codexsdk.PathInput("/absolute/path/to/notes.txt"),
+)
+
+for msg, err := range codexsdk.Query(ctx, content) {
+	_ = msg
+	_ = err
+}
+```
+
+For image inputs:
+
+```go
+image, err := codexsdk.ImageFileInput("/absolute/path/to/image.png")
+if err != nil {
+	return err
+}
+
+content := codexsdk.Blocks(
+	codexsdk.TextInput("Describe this image."),
+	image,
+)
+```
+
+Text-only one-shot queries stay on `codex exec` when the content can be represented there.
+Structured content, image URLs/data URLs, and streaming input use app-server semantics.
 
 ## Options and Backend Behavior
 
@@ -206,7 +249,7 @@ Options are backend-dependent. Unsupported combinations fail fast with `ErrUnsup
 | `WithCwd("/path")` / `WithCliPath("/path/codex")` / `WithEnv(...)` | Process/runtime setup |
 | `WithPermissionMode("acceptEdits")` / `WithSandbox("workspace-write")` | Permission/sandbox behavior |
 | `WithSystemPrompt("...")` / `WithSystemPromptPreset(...)` | System instructions |
-| `WithImages(...)` / `WithConfig(...)` | Codex-native CLI inputs/config |
+| `WithImages(...)` / `WithConfig(...)` | Codex-native CLI image inputs/config |
 | `WithOutputSchema(json)` | Passes `--output-schema` |
 | `WithOutputFormat(map[string]any{...})` | Structured output wrapper/schema for app-server flow |
 | `WithSkipVersionCheck(true)` | Skip CLI version check |
@@ -287,7 +330,7 @@ No running CLI instance is required.
 ## Error Handling
 
 ```go
-for msg, err := range codexsdk.Query(ctx, prompt) {
+for msg, err := range codexsdk.Query(ctx, codexsdk.Text(prompt)) {
 	if err != nil {
 		var cliErr *codexsdk.CLINotFoundError
 		if errors.As(err, &cliErr) {
@@ -327,6 +370,7 @@ for msg, err := range codexsdk.Query(ctx, prompt) {
 | [`quick_start`](./examples/quick_start) | Basic `Query()` usage |
 | [`client_multi_turn`](./examples/client_multi_turn) | Stateful multi-turn client patterns |
 | [`query_stream`](./examples/query_stream) | `QueryStream()` with streaming inputs |
+| [`multimodal_input`](./examples/multimodal_input) | Images and local file-path mentions with `UserMessageContent` |
 | [`mcp_calculator`](./examples/mcp_calculator) | In-process MCP server tools |
 | [`mcp_status`](./examples/mcp_status) | Querying MCP server status |
 | [`tool_permission_callback`](./examples/tool_permission_callback) | `WithCanUseTool` permission callback |
@@ -347,6 +391,7 @@ Run examples:
 go run ./examples/quick_start
 go run ./examples/client_multi_turn basic_streaming
 go run ./examples/query_stream
+go run ./examples/multimodal_input /absolute/path/to/image.png /absolute/path/to/spec.pdf
 ```
 
 ## Build and Test

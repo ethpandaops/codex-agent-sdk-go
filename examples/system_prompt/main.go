@@ -60,7 +60,7 @@ func noSystemPrompt() {
 		return
 	}
 
-	if err := client.Query(ctx, "What is 2 + 2?"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("What is 2 + 2?")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -103,7 +103,7 @@ func stringSystemPrompt() {
 		return
 	}
 
-	if err := client.Query(ctx, "What is 2 + 2?"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("What is 2 + 2?")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -149,7 +149,7 @@ func presetSystemPrompt() {
 		return
 	}
 
-	if err := client.Query(ctx, "What is 2 + 2?"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("What is 2 + 2?")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -198,7 +198,7 @@ func presetWithAppend() {
 		return
 	}
 
-	if err := client.Query(ctx, "What is 2 + 2?"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("What is 2 + 2?")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return

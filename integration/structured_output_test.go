@@ -19,7 +19,7 @@ func TestStructuredOutput_JSONSchema(t *testing.T) {
 
 	var receivedResponse bool
 
-	for msg, err := range codexsdk.Query(ctx, "What is 2+2? Provide structured output.",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("What is 2+2? Provide structured output."),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithOutputFormat(map[string]any{
 			"type": "json_schema",
@@ -74,7 +74,7 @@ func TestStructuredOutput_RequiredFields(t *testing.T) {
 	var receivedResponse bool
 
 	for msg, err := range codexsdk.Query(ctx,
-		"Generate a fictional person with a name and age in structured format.",
+		codexsdk.Text("Generate a fictional person with a name and age in structured format."),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithOutputFormat(map[string]any{
 			"type": "json_schema",
@@ -127,7 +127,7 @@ func TestStructuredOutput_WithEnum(t *testing.T) {
 	var receivedResponse bool
 
 	for msg, err := range codexsdk.Query(ctx,
-		"Pick a random color and intensity. Respond in structured format.",
+		codexsdk.Text("Pick a random color and intensity. Respond in structured format."),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithOutputFormat(map[string]any{
 			"type": "json_schema",
@@ -204,7 +204,7 @@ func TestClientStructuredOutput_StartWithOutputFormat(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	err = client.Query(ctx, "What is 2+2? Provide structured output.")
+	err = client.Query(ctx, codexsdk.Text("What is 2+2? Provide structured output."))
 	require.NoError(t, err)
 
 	var receivedResponse bool
@@ -254,7 +254,7 @@ func TestClientStructuredOutput_StartWithOutputFormat_ParsesStructuredOutput(t *
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	err = client.Query(ctx, "What is 2+2? Return a JSON object with answer set to the string \"4\".")
+	err = client.Query(ctx, codexsdk.Text("What is 2+2? Return a JSON object with answer set to the string \"4\"."))
 	require.NoError(t, err)
 
 	for msg, recvErr := range client.ReceiveResponse(ctx) {

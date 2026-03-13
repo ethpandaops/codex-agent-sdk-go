@@ -31,7 +31,7 @@ func TestDynamicControl_SetPermissionMode(t *testing.T) {
 	err = client.SetPermissionMode(ctx, "bypassPermissions")
 	require.NoError(t, err, "SetPermissionMode should succeed")
 
-	err = client.Query(ctx, "Say 'permission changed'")
+	err = client.Query(ctx, codexsdk.Text("Say 'permission changed'"))
 	require.NoError(t, err, "Query should succeed after SetPermissionMode")
 
 	var messages []codexsdk.Message
@@ -62,7 +62,7 @@ func TestDynamicControl_SetModel(t *testing.T) {
 	err = client.SetModel(ctx, new("codex-mini-latest"))
 	require.NoError(t, err, "SetModel should succeed")
 
-	err = client.Query(ctx, "Say 'model changed'")
+	err = client.Query(ctx, codexsdk.Text("Say 'model changed'"))
 	require.NoError(t, err, "Query should succeed after SetModel")
 
 	var messages []codexsdk.Message
@@ -91,7 +91,7 @@ func TestDynamicControl_Interrupt(t *testing.T) {
 	}
 
 	err = client.Query(ctx,
-		"Write a very long essay about the history of computing, including many details.")
+		codexsdk.Text("Write a very long essay about the history of computing, including many details."))
 	require.NoError(t, err, "Query should succeed")
 
 	time.Sleep(500 * time.Millisecond)

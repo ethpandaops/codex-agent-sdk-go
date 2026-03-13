@@ -19,7 +19,7 @@ func TestPartialMessages_DisabledByDefault(t *testing.T) {
 
 	var streamEventCount int
 
-	for msg, err := range codexsdk.Query(ctx, "Say 'hello'",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Say 'hello'"),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
 		if err != nil {

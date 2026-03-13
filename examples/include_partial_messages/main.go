@@ -17,7 +17,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	for msg, err := range codexsdk.Query(ctx, "Say 'Hello, streaming world!' one word at a time.",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Say 'Hello, streaming world!' one word at a time."),
 		codexsdk.WithIncludePartialMessages(true),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {

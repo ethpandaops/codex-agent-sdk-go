@@ -46,7 +46,7 @@ func singleMessageExample() {
 	defer cancel()
 
 	// SingleMessage is the simplest way to use QueryStream for one-shot queries
-	messages := codexsdk.SingleMessage("What is the capital of France?")
+	messages := codexsdk.SingleMessage(codexsdk.Text("What is the capital of France?"))
 
 	for msg, err := range codexsdk.QueryStream(ctx, messages) {
 		if err != nil {
@@ -71,9 +71,9 @@ func multiMessageExample() {
 
 	// MessagesFromSlice allows sending multiple messages in sequence
 	messages := codexsdk.MessagesFromSlice([]codexsdk.StreamingMessage{
-		codexsdk.NewUserMessage("Hello! I have a few questions."),
-		codexsdk.NewUserMessage("First, what is 2 + 2?"),
-		codexsdk.NewUserMessage("Second, what is the square root of 16?"),
+		codexsdk.NewUserMessage(codexsdk.Text("Hello! I have a few questions.")),
+		codexsdk.NewUserMessage(codexsdk.Text("First, what is 2 + 2?")),
+		codexsdk.NewUserMessage(codexsdk.Text("Second, what is the square root of 16?")),
 	})
 
 	for msg, err := range codexsdk.QueryStream(ctx, messages) {
@@ -110,7 +110,7 @@ func channelExample() {
 		}
 
 		for _, q := range questions {
-			msgChan <- codexsdk.NewUserMessage(q)
+			msgChan <- codexsdk.NewUserMessage(codexsdk.Text(q))
 
 			time.Sleep(100 * time.Millisecond) // Simulate delay between messages
 		}
@@ -138,7 +138,7 @@ func withOptionsExample() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	messages := codexsdk.SingleMessage("Explain what Golang is in one sentence.")
+	messages := codexsdk.SingleMessage(codexsdk.Text("Explain what Golang is in one sentence."))
 
 	for msg, err := range codexsdk.QueryStream(ctx, messages,
 		codexsdk.WithSystemPrompt("You are a helpful assistant that explains things simply."),

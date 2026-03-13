@@ -13,7 +13,7 @@ Shared repository instructions for coding agents.
 
 ### Core APIs
 
-- One-shot: `Query(ctx, prompt, opts...)`
+- One-shot: `Query(ctx, content, opts...)`
 - Streaming input: `QueryStream(ctx, messages, opts...)`
 - Stateful sessions: `NewClient()` + `Client`
 - Lifecycle helper: `WithClient(ctx, fn, opts...)`

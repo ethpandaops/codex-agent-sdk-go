@@ -56,8 +56,9 @@ func generateEvaluateRefine() {
 	fmt.Println("--- Step 1: Generate ---")
 
 	draft, cost, err := getAssistantText(ctx, codexsdk.Query(ctx,
-		"Write a short product description (2-3 sentences) for a smart water bottle "+
+		codexsdk.Text("Write a short product description (2-3 sentences) for a smart water bottle "+
 			"that tracks hydration and syncs with a phone app.",
+		),
 		codexsdk.WithSystemPrompt("You are a marketing copywriter. Write concise, compelling copy."),
 	))
 	if err != nil {
@@ -96,7 +97,7 @@ func generateEvaluateRefine() {
 	)
 
 	evaluation, cost, err := getAssistantText(ctx, codexsdk.Query(ctx,
-		evaluatePrompt,
+		codexsdk.Text(evaluatePrompt),
 		codexsdk.WithSystemPrompt(
 			"You are a marketing expert who evaluates copy. Be specific and constructive.",
 		),
@@ -131,7 +132,7 @@ func generateEvaluateRefine() {
 	)
 
 	refined, cost, err := getAssistantText(ctx, codexsdk.Query(ctx,
-		refinePrompt,
+		codexsdk.Text(refinePrompt),
 		codexsdk.WithSystemPrompt("You are a marketing copywriter. Improve copy based on feedback."),
 	))
 	if err != nil {

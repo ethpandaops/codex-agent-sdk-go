@@ -30,14 +30,14 @@ func MessagesFromChannel(ch <-chan StreamingMessage) iter.Seq[StreamingMessage] 
 }
 
 // SingleMessage creates a MessageStream with a single user message.
-// This is a convenience function for simple string prompts in streaming mode.
-func SingleMessage(content string) iter.Seq[StreamingMessage] {
+// This is a convenience function for simple user content in streaming mode.
+func SingleMessage(content UserMessageContent) iter.Seq[StreamingMessage] {
 	return MessagesFromSlice([]StreamingMessage{NewUserMessage(content)})
 }
 
 // NewUserMessage creates a StreamingMessage with type "user".
 // This is a convenience constructor for creating user messages.
-func NewUserMessage(content string) StreamingMessage {
+func NewUserMessage(content UserMessageContent) StreamingMessage {
 	return StreamingMessage{
 		Type: "user",
 		Message: StreamingMessageContent{

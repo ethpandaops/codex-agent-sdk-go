@@ -36,7 +36,7 @@ func displayMessage(msg codexsdk.Message) {
 }
 
 func queryAndDisplay(ctx context.Context, client codexsdk.Client, prompt string) *codexsdk.ResultMessage {
-	if err := client.Query(ctx, prompt); err != nil {
+	if err := client.Query(ctx, codexsdk.Text(prompt)); err != nil {
 		fmt.Printf("Query failed: %v\n", err)
 
 		return nil

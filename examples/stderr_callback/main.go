@@ -69,7 +69,7 @@ func main() {
 
 	fmt.Println("Running query with stderr capture...")
 
-	if err := client.Query(ctx, "What is 2+2?"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("What is 2+2?")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return

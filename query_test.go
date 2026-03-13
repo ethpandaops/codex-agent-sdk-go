@@ -24,7 +24,7 @@ func TestQueryCLINotFound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	for _, err := range Query(ctx, "test",
+	for _, err := range Query(ctx, Text("test"),
 		WithCliPath("/nonexistent/path/to/claude"),
 	) {
 		if err == nil {
@@ -45,7 +45,7 @@ func TestQueryWithNoOptions(t *testing.T) {
 
 	// This should work if claude is in PATH
 	// If not, it should return CLINotFoundError or ProcessError
-	for _, err := range Query(ctx, "test") {
+	for _, err := range Query(ctx, Text("test")) {
 		_, isCLINotFound := errors.AsType[*CLINotFoundError](err)
 		_, isProcessError := errors.AsType[*ProcessError](err)
 
@@ -62,7 +62,7 @@ func TestQuery_WithOptions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	for _, err := range Query(ctx, "test",
+	for _, err := range Query(ctx, Text("test"),
 		WithSystemPrompt("You are a helpful assistant."),
 		WithModel("claude-sonnet-4-5-20250514"),
 		WithPermissionMode("bypassPermissions"),
@@ -106,7 +106,7 @@ func TestQuery_WithCwd(t *testing.T) {
 	absPath, err := filepath.Abs(tmpDir)
 	require.NoError(t, err)
 
-	for _, err := range Query(ctx, "test",
+	for _, err := range Query(ctx, Text("test"),
 		WithCwd(absPath),
 		WithPermissionMode("bypassPermissions"),
 	) {
@@ -127,7 +127,7 @@ func TestQuery_WithEnv(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	for _, err := range Query(ctx, "test",
+	for _, err := range Query(ctx, Text("test"),
 		WithPermissionMode("bypassPermissions"),
 		WithEnv(map[string]string{
 			"CLAUDE_SDK_TEST_VAR": "test_value_123",
@@ -151,7 +151,7 @@ func TestQuery_WithSystemPromptPreset(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	for _, err := range Query(ctx, "test",
+	for _, err := range Query(ctx, Text("test"),
 		WithSystemPromptPreset(&SystemPromptPreset{
 			Type:   "preset",
 			Preset: "claude_code",
@@ -176,7 +176,7 @@ func TestQuery_WithOutputFormat(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	for _, err := range Query(ctx, "test",
+	for _, err := range Query(ctx, Text("test"),
 		WithOutputFormat(map[string]any{
 			"type": "json_schema",
 			"schema": map[string]any{
@@ -208,7 +208,7 @@ func TestQuery_WithResume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	for _, err := range Query(ctx, "test",
+	for _, err := range Query(ctx, Text("test"),
 		WithResume("nonexistent-session-id"),
 		WithPermissionMode("bypassPermissions"),
 	) {
@@ -229,7 +229,7 @@ func TestQuery_WithExtraArgs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	for _, err := range Query(ctx, "test",
+	for _, err := range Query(ctx, Text("test"),
 		WithExtraArgs(map[string]*string{
 			"verbose": new(""), // Boolean flag with empty value
 		}),
@@ -253,7 +253,7 @@ func TestQuery_CanUseToolWithPermissionPromptToolName(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	for _, err := range Query(ctx, "test",
+	for _, err := range Query(ctx, Text("test"),
 		WithCanUseTool(func(
 			_ context.Context,
 			_ string,
@@ -301,7 +301,7 @@ func TestQueryStream_CanUseToolWithPermissionPromptToolName(t *testing.T) {
 	defer cancel()
 
 	messages := MessagesFromSlice([]StreamingMessage{
-		NewUserMessage("test"),
+		NewUserMessage(Text("test")),
 	})
 
 	for _, err := range QueryStream(ctx, messages,
@@ -449,7 +449,7 @@ func TestQuery_FailFastUnsupportedOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for _, err := range Query(ctx, "test", tt.opts...) {
+			for _, err := range Query(ctx, Text("test"), tt.opts...) {
 				require.Error(t, err)
 				require.ErrorIs(t, err, ErrUnsupportedOption)
 				require.Contains(t, err.Error(), tt.contains)
@@ -464,28 +464,36 @@ func TestQuery_FailFastUnsupportedOptions(t *testing.T) {
 
 func TestBuildInitialUserMessage(t *testing.T) {
 	t.Run("text-only prompt", func(t *testing.T) {
-		msg := buildInitialUserMessage("hello", &CodexAgentOptions{})
+		msg := buildInitialUserMessage(Text("hello"), &CodexAgentOptions{})
 		require.Equal(t, "user", msg["type"])
 
 		messageData, ok := msg["message"].(map[string]any)
 		require.True(t, ok)
-		require.Equal(t, "hello", messageData["content"])
+		require.Equal(t, Text("hello"), messageData["content"])
 	})
 
 	t.Run("prompt with images", func(t *testing.T) {
-		msg := buildInitialUserMessage("look at this", &CodexAgentOptions{
+		msg := buildInitialUserMessage(Text("look at this"), &CodexAgentOptions{
 			Images: []string{"/tmp/a.png", "/tmp/b.png"},
 		})
 
 		messageData, ok := msg["message"].(map[string]any)
 		require.True(t, ok)
 
-		content, ok := messageData["content"].([]map[string]any)
+		content, ok := messageData["content"].(UserMessageContent)
 		require.True(t, ok)
-		require.Len(t, content, 3)
-		require.Equal(t, "text", content[0]["type"])
-		require.Equal(t, "/tmp/a.png", content[1]["path"])
-		require.Equal(t, "/tmp/b.png", content[2]["path"])
+
+		blocks := content.Blocks()
+		require.Len(t, blocks, 3)
+		require.Equal(t, "text", blocks[0].BlockType())
+
+		imageA, ok := blocks[1].(*InputLocalImageBlock)
+		require.True(t, ok)
+		require.Equal(t, "/tmp/a.png", imageA.Path)
+
+		imageB, ok := blocks[2].(*InputLocalImageBlock)
+		require.True(t, ok)
+		require.Equal(t, "/tmp/b.png", imageB.Path)
 	})
 }
 
@@ -505,7 +513,7 @@ func TestQuery_ContextCancelMidIteration(t *testing.T) {
 
 		var iterationCount int
 
-		for _, err := range Query(ctx, "test",
+		for _, err := range Query(ctx, Text("test"),
 			WithCliPath("/nonexistent/path/to/claude"),
 		) {
 			iterationCount++
@@ -536,7 +544,7 @@ func TestQuery_ContextCancelMidIteration(t *testing.T) {
 
 		var gotError error
 
-		for _, err := range Query(ctx, "test") {
+		for _, err := range Query(ctx, Text("test")) {
 			if err != nil {
 				gotError = err
 
@@ -557,7 +565,7 @@ func TestQueryStream_ContextCancelMidIteration(t *testing.T) {
 		defer cancel()
 
 		messages := MessagesFromSlice([]StreamingMessage{
-			NewUserMessage("test message"),
+			NewUserMessage(Text("test message")),
 		})
 
 		var gotError error
@@ -597,7 +605,7 @@ func TestQuery_EarlyExitDoesNotLeakGoroutines(t *testing.T) {
 	defer cancel()
 
 	// Break out of iteration immediately
-	for _, err := range Query(ctx, "test",
+	for _, err := range Query(ctx, Text("test"),
 		WithCliPath("/nonexistent/path/to/claude"),
 	) {
 		// Break immediately regardless of error
@@ -625,7 +633,7 @@ func TestQueryStream_EarlyExitDoesNotBlockInputStreamer(t *testing.T) {
 	defer cancel()
 
 	messages := MessagesFromSlice([]StreamingMessage{
-		NewUserMessage("test"),
+		NewUserMessage(Text("test")),
 	})
 
 	// Break out immediately
@@ -667,7 +675,7 @@ func TestQueryStream_DeferOrderingDoesNotDeadlock(t *testing.T) {
 	// Create a slow message iterator that will be interrupted
 	slowMessages := func(yield func(StreamingMessage) bool) {
 		// First message goes through
-		if !yield(NewUserMessage("first")) {
+		if !yield(NewUserMessage(Text("first"))) {
 			return
 		}
 		// Simulate slow producer - will be interrupted by context
@@ -675,7 +683,7 @@ func TestQueryStream_DeferOrderingDoesNotDeadlock(t *testing.T) {
 		case <-ctx.Done():
 			return
 		case <-time.After(5 * time.Second):
-			yield(NewUserMessage("second"))
+			yield(NewUserMessage(Text("second")))
 		}
 	}
 
@@ -1038,8 +1046,8 @@ func TestQueryStream_StreamInputError_Propagated(t *testing.T) {
 
 	// Create multiple messages - the second one should trigger the failure
 	messages := MessagesFromSlice([]StreamingMessage{
-		NewUserMessage("first message"),
-		NewUserMessage("second message - this will fail"),
+		NewUserMessage(Text("first message")),
+		NewUserMessage(Text("second message - this will fail")),
 	})
 
 	var receivedError error
@@ -1079,7 +1087,7 @@ func TestQuery_ReturnsImmediatelyAfterResultAndClosesTransport(t *testing.T) {
 	go func() {
 		defer close(iteratorDone)
 
-		for msg, err := range Query(ctx, "test", WithTransport(transport)) {
+		for msg, err := range Query(ctx, Text("test"), WithTransport(transport)) {
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 
@@ -1116,7 +1124,7 @@ func TestQueryStream_StopsAtResultMessage(t *testing.T) {
 
 	transport := newResultMessageTransport()
 	messages := MessagesFromSlice([]StreamingMessage{
-		NewUserMessage("hello"),
+		NewUserMessage(Text("hello")),
 	})
 
 	start := time.Now()

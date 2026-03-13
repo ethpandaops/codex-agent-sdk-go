@@ -513,7 +513,7 @@ func main() {
 		fmt.Printf("Prompt: %s\n", prompt)
 		fmt.Println(strings.Repeat("-", 50))
 
-		if queryErr := client.Query(ctx, prompt); queryErr != nil {
+		if queryErr := client.Query(ctx, codexsdk.Text(prompt)); queryErr != nil {
 			fmt.Printf("Failed to send query: %v\n", queryErr)
 
 			return

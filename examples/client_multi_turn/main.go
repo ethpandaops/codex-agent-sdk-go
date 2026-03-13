@@ -67,7 +67,7 @@ func exampleBasicStreaming() {
 
 	fmt.Println("User: What is 2+2?")
 
-	if err := client.Query(ctx, "What is 2+2?"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("What is 2+2?")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -112,7 +112,7 @@ func exampleMultiTurn() {
 	// First turn
 	fmt.Println("User: What's the capital of France?")
 
-	if err := client.Query(ctx, "What's the capital of France?"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("What's the capital of France?")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -131,7 +131,7 @@ func exampleMultiTurn() {
 	// Second turn - follow-up
 	fmt.Println("\nUser: What's the population of that city?")
 
-	if err := client.Query(ctx, "What's the population of that city?"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("What's the population of that city?")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -199,7 +199,7 @@ func exampleConcurrent() {
 	for _, question := range questions {
 		fmt.Printf("\nUser: %s\n", question)
 
-		if err := client.Query(ctx, question); err != nil {
+		if err := client.Query(ctx, codexsdk.Text(question)); err != nil {
 			fmt.Printf("Failed to send query: %v\n", err)
 
 			break
@@ -245,7 +245,7 @@ func exampleInterrupt() {
 	fmt.Println("\nUser: Count from 1 to 100 slowly")
 
 	queryText := "Count from 1 to 100 slowly, with a brief pause between each number"
-	if err := client.Query(ctx, queryText); err != nil {
+	if err := client.Query(ctx, codexsdk.Text(queryText)); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -300,7 +300,7 @@ func exampleInterrupt() {
 	// Send new instruction after interrupt
 	fmt.Println("\nUser: Never mind, just tell me a quick joke")
 
-	if err := client.Query(ctx, "Never mind, just tell me a quick joke"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("Never mind, just tell me a quick joke")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -345,7 +345,7 @@ func exampleManualHandling() {
 	fmt.Println("User: List 5 programming languages and their main use cases")
 
 	queryText := "List 5 programming languages and their main use cases"
-	if err := client.Query(ctx, queryText); err != nil {
+	if err := client.Query(ctx, codexsdk.Text(queryText)); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -422,7 +422,7 @@ func exampleWithOptions() {
 	fmt.Println("User: Create a simple hello.txt file with a greeting message")
 
 	queryText := "Create a simple hello.txt file with a greeting message"
-	if err := client.Query(ctx, queryText); err != nil {
+	if err := client.Query(ctx, codexsdk.Text(queryText)); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -485,7 +485,7 @@ func exampleBashCommand() {
 	fmt.Println("User: Run a bash echo command")
 
 	queryText := "Run a bash echo command that says 'Hello from bash!'"
-	if err := client.Query(ctx, queryText); err != nil {
+	if err := client.Query(ctx, codexsdk.Text(queryText)); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -618,7 +618,7 @@ func exampleControlProtocol() {
 	fmt.Println("User: Count from 1 to 100 slowly")
 
 	queryText := "Count from 1 to 100 slowly, with a brief pause between each number"
-	if err := client.Query(ctx, queryText); err != nil {
+	if err := client.Query(ctx, codexsdk.Text(queryText)); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -672,7 +672,7 @@ func exampleControlProtocol() {
 	// Send new instruction after interrupt
 	fmt.Println("\nUser: Never mind, just tell me a quick joke")
 
-	if err := client.Query(ctx, "Never mind, just tell me a quick joke"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("Never mind, just tell me a quick joke")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -724,7 +724,7 @@ func exampleChannelPrompt() {
 	for _, question := range questions {
 		fmt.Printf("User: %s\n", question)
 
-		if err := client.Query(ctx, question); err != nil {
+		if err := client.Query(ctx, codexsdk.Text(question)); err != nil {
 			fmt.Printf("Failed to send query: %v\n", err)
 
 			return
@@ -769,7 +769,7 @@ func exampleErrorHandling() {
 	// Send a message that will take time to process
 	fmt.Println("User: Run a bash sleep command for 60 seconds not in the background")
 
-	if err := client.Query(ctx, "Run a bash sleep command for 60 seconds not in the background"); err != nil {
+	if err := client.Query(ctx, codexsdk.Text("Run a bash sleep command for 60 seconds not in the background")); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return

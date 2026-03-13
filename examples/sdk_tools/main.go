@@ -78,7 +78,7 @@ func main() {
 	fmt.Println()
 
 	for msg, err := range codexsdk.Query(ctx,
-		"Use the add tool to add 12 and 30, then use the multiply tool to multiply the result by 2. Report both results.",
+		codexsdk.Text("Use the add tool to add 12 and 30, then use the multiply tool to multiply the result by 2. Report both results."),
 		codexsdk.WithSDKTools(addTool, multiplyTool),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {

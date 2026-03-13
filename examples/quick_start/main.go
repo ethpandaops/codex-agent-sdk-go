@@ -46,7 +46,7 @@ func basicExample() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	for msg, err := range codexsdk.Query(ctx, "What is 2 + 2?") {
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("What is 2 + 2?")) {
 		if err != nil {
 			fmt.Printf("Query failed: %v\n", err)
 
@@ -68,7 +68,7 @@ func withOptionsExample() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	for msg, err := range codexsdk.Query(ctx, "Explain what Golang is in one sentence.",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Explain what Golang is in one sentence."),
 		codexsdk.WithSystemPrompt("You are a helpful assistant that explains things simply."),
 	) {
 		if err != nil {
@@ -92,7 +92,7 @@ func withToolsExample() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	for msg, err := range codexsdk.Query(ctx, "Create a file called hello.txt with 'Hello, World!' in it",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Create a file called hello.txt with 'Hello, World!' in it"),
 		codexsdk.WithAllowedTools("Read", "Write"),
 		codexsdk.WithSystemPrompt("You are a helpful file assistant."),
 	) {
