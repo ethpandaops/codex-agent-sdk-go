@@ -77,8 +77,8 @@ func TestPlanMode_UserInputCallback(t *testing.T) {
 	}
 
 	err = client.Query(ctx,
-		`Use the request_user_input tool to ask me to choose between: Go, Rust, Python. `+
-			`Then tell me which one I selected.`)
+		codexsdk.Text(`Use the request_user_input tool to ask me to choose between: Go, Rust, Python. `+
+			`Then tell me which one I selected.`))
 	require.NoError(t, err, "Query should succeed")
 
 	var gotResult bool
@@ -120,9 +120,9 @@ func TestPlanMode_UserInputCallback(t *testing.T) {
 	t.Logf("Full assistant text: %s", assistantText)
 }
 
-// TestPlanMode_StartWithPrompt tests plan mode using StartWithPrompt for
+// TestPlanMode_StartWithContent tests plan mode using StartWithContent for
 // a single-turn flow that triggers the user input callback.
-func TestPlanMode_StartWithPrompt(t *testing.T) {
+func TestPlanMode_StartWithContent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -164,15 +164,15 @@ func TestPlanMode_StartWithPrompt(t *testing.T) {
 	client := codexsdk.NewClient()
 	defer client.Close()
 
-	err := client.StartWithPrompt(ctx,
-		`Use the request_user_input tool to ask me a yes/no question. Then confirm my answer.`,
+	err := client.StartWithContent(ctx,
+		codexsdk.Text(`Use the request_user_input tool to ask me a yes/no question. Then confirm my answer.`),
 		codexsdk.WithOnUserInput(userInputCallback),
 		codexsdk.WithCanUseTool(permissionCallback),
 		codexsdk.WithPermissionMode("plan"),
 	)
 	if err != nil {
 		skipIfCLINotInstalled(t, err)
-		t.Fatalf("StartWithPrompt failed: %v", err)
+		t.Fatalf("StartWithContent failed: %v", err)
 	}
 
 	var gotResult bool

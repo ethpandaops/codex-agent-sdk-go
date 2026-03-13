@@ -96,7 +96,7 @@ func exampleCancellation() {
 	queryDone := make(chan error, 1)
 
 	go func() {
-		queryDone <- client.Query(ctx, "Create a file named cancellation_demo.txt with 'Hello World'")
+		queryDone <- client.Query(ctx, codexsdk.Text("Create a file named cancellation_demo.txt with 'Hello World'"))
 	}()
 
 	responseDone := make(chan struct{})
@@ -198,7 +198,7 @@ func exampleGracefulShutdown() {
 
 	go func() {
 		prompt := "Use Bash to run exactly this command and create the file: printf 'test' > graceful_shutdown_demo.txt"
-		if err := client.Query(ctx, prompt); err != nil {
+		if err := client.Query(ctx, codexsdk.Text(prompt)); err != nil {
 			fmt.Printf("Query error (expected during shutdown): %v\n", err)
 		}
 	}()

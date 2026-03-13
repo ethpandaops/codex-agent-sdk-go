@@ -9,7 +9,7 @@
 // For simple, one-shot queries, use the Query function:
 //
 //	ctx := context.Background()
-//	for msg, err := range codexsdk.Query(ctx, "What is 2+2?",
+//	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("What is 2+2?"),
 //	    codexsdk.WithPermissionMode("acceptEdits"),
 //	) {
 //	    if err != nil {
@@ -36,7 +36,7 @@
 //
 //	// Using WithClient for automatic lifecycle management
 //	err := codexsdk.WithClient(ctx, func(c codexsdk.Client) error {
-//	    if err := c.Query(ctx, "Hello Codex"); err != nil {
+//	    if err := c.Query(ctx, codexsdk.Text("Hello Codex")); err != nil {
 //	        return err
 //	    }
 //	    for msg, err := range c.ReceiveResponse(ctx) {
@@ -70,7 +70,7 @@
 // To receive token-by-token streaming deltas as StreamEvent messages, enable
 // WithIncludePartialMessages:
 //
-//	for msg, err := range codexsdk.Query(ctx, "Hello",
+//	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Hello"),
 //	    codexsdk.WithIncludePartialMessages(true),
 //	) {
 //	    if err != nil {
@@ -86,7 +86,7 @@
 // For detailed operation tracking, use WithLogger:
 //
 //	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-//	messages, err := codexsdk.Query(ctx, "Hello Codex",
+//	messages, err := codexsdk.Query(ctx, codexsdk.Text("Hello Codex"),
 //	    codexsdk.WithLogger(logger),
 //	)
 //
@@ -94,7 +94,7 @@
 //
 // The SDK provides typed errors for different failure scenarios:
 //
-//	messages, err := codexsdk.Query(ctx, prompt, codexsdk.WithPermissionMode("acceptEdits"))
+//	messages, err := codexsdk.Query(ctx, codexsdk.Text(prompt), codexsdk.WithPermissionMode("acceptEdits"))
 //	if err != nil {
 //	    if cliErr, ok := errors.AsType[*codexsdk.CLINotFoundError](err); ok {
 //	        log.Fatalf("Codex CLI not installed, searched: %v", cliErr.SearchedPaths)
@@ -127,7 +127,7 @@
 //	    },
 //	)
 //
-//	for msg, err := range codexsdk.Query(ctx, "Add 5 and 3",
+//	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Add 5 and 3"),
 //	    codexsdk.WithSDKTools(add),
 //	    codexsdk.WithPermissionMode("bypassPermissions"),
 //	) {

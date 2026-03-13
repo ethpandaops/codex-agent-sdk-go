@@ -31,7 +31,7 @@ import (
 //	}
 //
 //	// Send a query
-//	err = client.Query(ctx, "What is 2+2?")
+//	err = client.Query(ctx, Text("What is 2+2?"))
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -57,11 +57,11 @@ type Client interface {
 	// Returns CLINotFoundError if CLI not found, CLIConnectionError on failure.
 	Start(ctx context.Context, opts ...Option) error
 
-	// StartWithPrompt establishes a connection and immediately sends an initial prompt.
-	// Equivalent to calling Start() followed by Query(ctx, prompt).
-	// The prompt is sent to the "default" session.
+	// StartWithContent establishes a connection and immediately sends an initial message.
+	// Equivalent to calling Start() followed by Query(ctx, content).
+	// The content is sent to the "default" session.
 	// Returns CLINotFoundError if CLI not found, CLIConnectionError on failure.
-	StartWithPrompt(ctx context.Context, prompt string, opts ...Option) error
+	StartWithContent(ctx context.Context, content UserMessageContent, opts ...Option) error
 
 	// StartWithStream establishes a connection and streams initial messages.
 	// Messages are consumed from the iterator and sent via stdin.
@@ -70,10 +70,10 @@ type Client interface {
 	// Returns CLINotFoundError if CLI not found, CLIConnectionError on failure.
 	StartWithStream(ctx context.Context, messages iter.Seq[StreamingMessage], opts ...Option) error
 
-	// Query sends a user prompt to the agent.
+	// Query sends user content to the agent.
 	// Returns immediately after sending; use ReceiveMessages() or ReceiveResponse() to get responses.
 	// Optional sessionID defaults to "default" for multi-session support.
-	Query(ctx context.Context, prompt string, sessionID ...string) error
+	Query(ctx context.Context, content UserMessageContent, sessionID ...string) error
 
 	// ReceiveMessages returns an iterator that yields messages indefinitely.
 	// Messages are yielded as they arrive until EOF, an error occurs, or context is cancelled.

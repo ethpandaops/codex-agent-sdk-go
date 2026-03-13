@@ -309,7 +309,7 @@ func main() {
 			}
 		}
 
-		if err := client.Query(ctx, prompt); err != nil {
+		if err := client.Query(ctx, codexsdk.Text(prompt)); err != nil {
 			logger.Error("Failed to send query", "error", err)
 			cancel()
 			client.Close()

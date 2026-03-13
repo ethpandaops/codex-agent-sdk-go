@@ -29,7 +29,7 @@ func TestQuery_CloseMidStream(t *testing.T) {
 		t.Fatalf("Connect failed: %v", err)
 	}
 
-	err = client.Query(ctx, "Write a short story about a robot. Include at least 3 paragraphs.")
+	err = client.Query(ctx, codexsdk.Text("Write a short story about a robot. Include at least 3 paragraphs."))
 	require.NoError(t, err, "Query should succeed")
 
 	receiveDone := make(chan struct{})
@@ -98,7 +98,7 @@ func TestClient_ContextCancelDuringQuery(t *testing.T) {
 
 	queryCtx, queryCancel := context.WithCancel(ctx)
 
-	err = client.Query(queryCtx, "Explain quantum computing in detail.")
+	err = client.Query(queryCtx, codexsdk.Text("Explain quantum computing in detail."))
 	require.NoError(t, err, "Query should succeed")
 
 	receiveDone := make(chan struct{})
@@ -157,7 +157,7 @@ func TestClient_RapidCloseReopen(t *testing.T) {
 				t.Fatalf("Connect failed: %v", err)
 			}
 
-			err = client.Query(ctx, "Say 'hello'")
+			err = client.Query(ctx, codexsdk.Text("Say 'hello'"))
 			require.NoError(t, err)
 
 			for msg, err := range client.ReceiveMessages(ctx) {

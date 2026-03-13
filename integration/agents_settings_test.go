@@ -21,7 +21,7 @@ func TestAgentsAndSettings_AgentDefinition(t *testing.T) {
 
 	receivedResponse := false
 
-	for msg, err := range codexsdk.Query(ctx, "Say 'hello'",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Say 'hello'"),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
 		if err != nil {
@@ -48,7 +48,7 @@ func TestAgentsAndSettings_SettingSources(t *testing.T) {
 
 	receivedResult := false
 
-	for msg, err := range codexsdk.Query(ctx, "What is 2+2? Reply with just the number.",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("What is 2+2? Reply with just the number."),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
 		if err != nil {
@@ -72,7 +72,7 @@ func TestAgentsAndSettings_NoSettingSources(t *testing.T) {
 
 	receivedResult := false
 
-	for msg, err := range codexsdk.Query(ctx, "Say 'isolated'",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Say 'isolated'"),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
 		if err != nil {
@@ -126,7 +126,7 @@ You are a simple test agent. When asked a question, provide a brief, helpful ans
 		foundAgent        bool
 	)
 
-	for msg, err := range codexsdk.Query(ctx, "Say hello in exactly 3 words",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Say hello in exactly 3 words"),
 		codexsdk.WithCwd(tmpDir),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {

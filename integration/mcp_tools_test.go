@@ -39,7 +39,7 @@ func TestMCPTools_Registration(t *testing.T) {
 	server := codexsdk.CreateSdkMcpServer("sdk", "1.0.0", echoTool)
 	receivedResult := false
 
-	for msg, err := range codexsdk.Query(ctx, "Say hello",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Say hello"),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithMCPServers(map[string]codexsdk.MCPServerConfig{
 			"sdk": server,
@@ -90,7 +90,7 @@ func TestMCPTools_AllowedTools_PublicNameExecutesSDKTool(t *testing.T) {
 	server := codexsdk.CreateSdkMcpServer("sdk", "1.0.0", addTool)
 
 	for _, err := range codexsdk.Query(ctx,
-		"Use the add MCP tool on the sdk server to calculate 15 + 27.",
+		codexsdk.Text("Use the add MCP tool on the sdk server to calculate 15 + 27."),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithSystemPrompt(
 			"You have one MCP tool on the sdk server named add. Use it for the calculation and do not answer from memory.",
@@ -144,7 +144,7 @@ func TestSDKTools_WithSDKMCPServers_PreservesDynamicTools(t *testing.T) {
 	server := codexsdk.CreateSdkMcpServer("sdk", "1.0.0", noopTool)
 
 	for _, err := range codexsdk.Query(ctx,
-		"Use the reveal_secret tool and report the secret string it returns. Do not answer from memory.",
+		codexsdk.Text("Use the reveal_secret tool and report the secret string it returns. Do not answer from memory."),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithSystemPrompt(
 			"You have one dynamic tool named reveal_secret and one MCP tool named noop on the sdk server. "+
@@ -189,7 +189,7 @@ func TestSDKTools_WithReservedSDKMCPPrefixWithoutServer_PreservesDynamicToolName
 	)
 
 	for _, err := range codexsdk.Query(ctx,
-		"Use the sdkmcp__plain_dynamic_tool tool and report the secret string it returns. Do not answer from memory.",
+		codexsdk.Text("Use the sdkmcp__plain_dynamic_tool tool and report the secret string it returns. Do not answer from memory."),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithSystemPrompt(
 			"You have one dynamic tool named sdkmcp__plain_dynamic_tool. "+
@@ -237,7 +237,7 @@ func TestSDKTools_Registration(t *testing.T) {
 
 	receivedResult := false
 
-	for msg, err := range codexsdk.Query(ctx, "Say hello",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("Say hello"),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithSDKTools(echoTool),
 	) {
@@ -294,7 +294,7 @@ func TestSDKTools_Execution(t *testing.T) {
 	)
 
 	for _, err := range codexsdk.Query(ctx,
-		"Use the add_numbers tool to add 5 and 3",
+		codexsdk.Text("Use the add_numbers tool to add 5 and 3"),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithSDKTools(calculatorTool),
 	) {
@@ -335,7 +335,7 @@ func TestSDKTools_ReturnValue(t *testing.T) {
 	var mentionedNumber bool
 
 	for msg, err := range codexsdk.Query(ctx,
-		"Use the get_magic_number tool and tell me what number it returns",
+		codexsdk.Text("Use the get_magic_number tool and tell me what number it returns"),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 		codexsdk.WithSDKTools(magicTool),
 	) {

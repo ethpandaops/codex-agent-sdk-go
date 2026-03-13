@@ -155,11 +155,37 @@ type Usage = message.Usage
 
 // ===== Content Blocks =====
 
+const (
+	// BlockTypeText is a plain text user content block.
+	BlockTypeText = message.BlockTypeText
+	// BlockTypeImage is an app-server image URL/data-URL content block.
+	BlockTypeImage = message.BlockTypeImage
+	// BlockTypeLocalImage is a local image-path content block.
+	BlockTypeLocalImage = message.BlockTypeLocalImage
+	// BlockTypeMention is a local path mention content block.
+	BlockTypeMention = message.BlockTypeMention
+	// BlockTypeThinking is an assistant reasoning content block.
+	BlockTypeThinking = message.BlockTypeThinking
+	// BlockTypeToolUse is a tool-use content block.
+	BlockTypeToolUse = message.BlockTypeToolUse
+	// BlockTypeToolResult is a tool-result content block.
+	BlockTypeToolResult = message.BlockTypeToolResult
+)
+
 // ContentBlock represents a block of content within a message.
 type ContentBlock = message.ContentBlock
 
 // TextBlock contains plain text content.
 type TextBlock = message.TextBlock
+
+// InputImageBlock contains an app-server image input reference.
+type InputImageBlock = message.InputImageBlock
+
+// InputLocalImageBlock contains a local image-path input reference.
+type InputLocalImageBlock = message.InputLocalImageBlock
+
+// InputMentionBlock contains a generic local path mention.
+type InputMentionBlock = message.InputMentionBlock
 
 // ThinkingBlock contains the agent's thinking process.
 type ThinkingBlock = message.ThinkingBlock
@@ -169,6 +195,9 @@ type ToolUseBlock = message.ToolUseBlock
 
 // ToolResultBlock contains the result of a tool execution.
 type ToolResultBlock = message.ToolResultBlock
+
+// UnknownBlock preserves unrecognized content blocks without losing data.
+type UnknownBlock = message.UnknownBlock
 
 // ===== Hooks =====
 

@@ -29,7 +29,7 @@ func TestClient_QueryNotConnected(t *testing.T) {
 
 	ctx := context.Background()
 
-	err := client.Query(ctx, "test prompt")
+	err := client.Query(ctx, Text("test prompt"))
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not connected")
@@ -334,7 +334,7 @@ func TestClient_ContextTimeout(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 
-	err := client.Query(ctx, "test")
+	err := client.Query(ctx, Text("test"))
 	require.Error(t, err)
 }
 
@@ -421,7 +421,7 @@ func TestClient_CleanupOnError(t *testing.T) {
 
 		// Operations after close should fail gracefully
 		ctx := context.Background()
-		err = client.Query(ctx, "test")
+		err = client.Query(ctx, Text("test"))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "not connected")
 
@@ -451,7 +451,7 @@ func TestClient_ConcurrentOperations(t *testing.T) {
 				defer wg.Done()
 
 				ctx := context.Background()
-				err := client.Query(ctx, "test")
+				err := client.Query(ctx, Text("test"))
 
 				errors <- err
 			}()
@@ -738,7 +738,7 @@ func TestClient_MessageFlowPattern(t *testing.T) {
 		ctx := context.Background()
 
 		// Query should fail when not connected
-		err := client.Query(ctx, "Hello")
+		err := client.Query(ctx, Text("Hello"))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "not connected")
 
@@ -987,7 +987,7 @@ func TestClient_ConcurrentSendReceiveWhenNotConnected(t *testing.T) {
 				defer wg.Done()
 
 				ctx := context.Background()
-				err := client.Query(ctx, "test")
+				err := client.Query(ctx, Text("test"))
 
 				require.Error(t, err)
 				require.Contains(t, err.Error(), "not connected")
@@ -1026,7 +1026,7 @@ func TestClient_ConcurrentSendReceiveWhenNotConnected(t *testing.T) {
 
 			ctx := context.Background()
 
-			_ = client.Query(ctx, "test")
+			_ = client.Query(ctx, Text("test"))
 		}()
 
 		go func() {
@@ -1096,16 +1096,16 @@ func TestClient_ResponseStopsAtResult(t *testing.T) {
 	})
 }
 
-// TestClient_StartWithPrompt tests StartWithPrompt method.
-func TestClient_StartWithPrompt(t *testing.T) {
+// TestClient_StartWithContent tests StartWithContent method.
+func TestClient_StartWithContent(t *testing.T) {
 	t.Run("sends prompt after connection", func(t *testing.T) {
 		client := NewClient()
 		defer client.Close()
 
 		ctx := context.Background()
 
-		// StartWithPrompt should fail with CLI not found
-		err := client.StartWithPrompt(ctx, "Hello, Claude!",
+		// StartWithContent should fail with CLI not found
+		err := client.StartWithContent(ctx, Text("Hello, Claude!"),
 			WithCliPath("/nonexistent/claude"),
 		)
 		require.Error(t, err)
@@ -1119,7 +1119,7 @@ func TestClient_StartWithPrompt(t *testing.T) {
 
 		ctx := context.Background()
 
-		err := client.StartWithPrompt(ctx, "",
+		err := client.StartWithContent(ctx, Text(""),
 			WithCliPath("/nonexistent/claude"),
 		)
 		require.Error(t, err)
@@ -1134,7 +1134,7 @@ func TestClient_StartWithPrompt(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := client.StartWithPrompt(ctx, "test",
+		err := client.StartWithContent(ctx, Text("test"),
 			WithCliPath("/nonexistent/claude"),
 		)
 		require.Error(t, err)
@@ -1146,7 +1146,7 @@ func TestClient_StartWithPrompt(t *testing.T) {
 
 		ctx := context.Background()
 
-		err := client.StartWithPrompt(ctx, "What is 2+2?",
+		err := client.StartWithContent(ctx, Text("What is 2+2?"),
 			WithCliPath("/nonexistent/claude"),
 			WithModel("claude-3-5-sonnet-20241022"),
 			WithPermissionMode("acceptEdits"),
@@ -1166,7 +1166,7 @@ func TestClient_StartWithStream(t *testing.T) {
 
 		ctx := context.Background()
 
-		messages := SingleMessage("Hello, Claude!")
+		messages := SingleMessage(Text("Hello, Claude!"))
 
 		err := client.StartWithStream(ctx, messages,
 			WithCliPath("/nonexistent/claude"),
@@ -1183,8 +1183,8 @@ func TestClient_StartWithStream(t *testing.T) {
 		ctx := context.Background()
 
 		msgs := []StreamingMessage{
-			NewUserMessage("First message"),
-			NewUserMessage("Second message"),
+			NewUserMessage(Text("First message")),
+			NewUserMessage(Text("Second message")),
 		}
 		messages := MessagesFromSlice(msgs)
 
@@ -1219,7 +1219,7 @@ func TestClient_StartWithStream(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		messages := SingleMessage("test")
+		messages := SingleMessage(Text("test"))
 
 		err := client.StartWithStream(ctx, messages,
 			WithCliPath("/nonexistent/claude"),
@@ -1235,9 +1235,9 @@ func TestClient_StartWithStream(t *testing.T) {
 
 		ch := make(chan StreamingMessage, 2)
 
-		ch <- NewUserMessage("First")
+		ch <- NewUserMessage(Text("First"))
 
-		ch <- NewUserMessage("Second")
+		ch <- NewUserMessage(Text("Second"))
 
 		close(ch)
 
@@ -1252,15 +1252,15 @@ func TestClient_StartWithStream(t *testing.T) {
 	})
 }
 
-// TestClient_StartWithPrompt_AlreadyConnected tests that StartWithPrompt returns error if already connected.
-func TestClient_StartWithPrompt_AlreadyConnected(t *testing.T) {
+// TestClient_StartWithContent_AlreadyConnected tests that StartWithContent returns error if already connected.
+func TestClient_StartWithContent_AlreadyConnected(t *testing.T) {
 	client := NewClient()
 	defer client.Close()
 
 	ctx := context.Background()
 
 	// First call fails with CLI not found (doesn't set connected=true)
-	err := client.StartWithPrompt(ctx, "test",
+	err := client.StartWithContent(ctx, Text("test"),
 		WithCliPath("/nonexistent/claude"),
 	)
 	require.Error(t, err)
@@ -1268,7 +1268,7 @@ func TestClient_StartWithPrompt_AlreadyConnected(t *testing.T) {
 	require.True(t, ok)
 
 	// Second call should also fail with CLI not found
-	err = client.StartWithPrompt(ctx, "test2",
+	err = client.StartWithContent(ctx, Text("test2"),
 		WithCliPath("/nonexistent/claude"),
 	)
 	require.Error(t, err)
@@ -1281,7 +1281,7 @@ func TestClient_StartWithStream_AlreadyConnected(t *testing.T) {
 
 	ctx := context.Background()
 
-	messages := SingleMessage("test")
+	messages := SingleMessage(Text("test"))
 
 	// First call fails with CLI not found
 	err := client.StartWithStream(ctx, messages,
@@ -1311,16 +1311,16 @@ func TestClient_StartAfterClose(t *testing.T) {
 	require.ErrorIs(t, err, ErrClientClosed)
 }
 
-// TestClient_StartWithPromptAfterClose tests that StartWithPrompt() returns ErrClientClosed after Close().
-func TestClient_StartWithPromptAfterClose(t *testing.T) {
+// TestClient_StartWithContentAfterClose tests that StartWithContent() returns ErrClientClosed after Close().
+func TestClient_StartWithContentAfterClose(t *testing.T) {
 	client := NewClient()
 
 	// Close the client first
 	err := client.Close()
 	require.NoError(t, err)
 
-	// StartWithPrompt should return ErrClientClosed
-	err = client.StartWithPrompt(context.Background(), "Hello",
+	// StartWithContent should return ErrClientClosed
+	err = client.StartWithContent(context.Background(), Text("Hello"),
 		WithCliPath("/nonexistent/claude"),
 	)
 	require.ErrorIs(t, err, ErrClientClosed)
@@ -1335,7 +1335,7 @@ func TestClient_StartWithStreamAfterClose(t *testing.T) {
 	require.NoError(t, err)
 
 	// StartWithStream should return ErrClientClosed
-	messages := SingleMessage("Hello")
+	messages := SingleMessage(Text("Hello"))
 	err = client.StartWithStream(context.Background(), messages,
 		WithCliPath("/nonexistent/claude"),
 	)
@@ -1558,7 +1558,7 @@ func TestClient_OperationsAfterCloseReturnError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query should fail
-	err = client.Query(ctx, "test")
+	err = client.Query(ctx, Text("test"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not connected")
 

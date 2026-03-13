@@ -17,7 +17,7 @@ import (
 // Example usage:
 //
 //	err := codexsdk.WithClient(ctx, func(c codexsdk.Client) error {
-//	    if err := c.Query(ctx, "Hello"); err != nil {
+//	    if err := c.Query(ctx, Text("Hello")); err != nil {
 //	        return err
 //	    }
 //	    for msg, err := range c.ReceiveResponse(ctx) {

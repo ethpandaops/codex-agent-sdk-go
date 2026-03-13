@@ -230,8 +230,8 @@ type Usage struct {
 
 // StreamingMessageContent represents the content of a streaming message.
 type StreamingMessageContent struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string             `json:"role"`
+	Content UserMessageContent `json:"content"`
 }
 
 // StreamingMessage represents a message sent via stdin in streaming mode.

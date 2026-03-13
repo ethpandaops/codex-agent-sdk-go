@@ -59,7 +59,7 @@ func runSingleQuery(title, prompt string) {
 		return
 	}
 
-	if err := client.Query(ctx, prompt); err != nil {
+	if err := client.Query(ctx, codexsdk.Text(prompt)); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return
@@ -116,7 +116,7 @@ func runSoftBudgetExample() {
 	for i, prompt := range prompts {
 		fmt.Printf("Token-budget query %d: %s\n", i+1, prompt)
 
-		if err := client.Query(ctx, prompt); err != nil {
+		if err := client.Query(ctx, codexsdk.Text(prompt)); err != nil {
 			fmt.Printf("Failed to send query: %v\n", err)
 
 			return

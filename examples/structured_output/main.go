@@ -43,7 +43,7 @@ func marshalSchema(schema map[string]any) (string, error) {
 func getStructuredOutput(ctx context.Context, prompt string, schema string, systemPrompt string) (json.RawMessage, error) {
 	var lastAssistantText string
 
-	for msg, err := range codexsdk.Query(ctx, prompt,
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text(prompt),
 		codexsdk.WithOutputSchema(schema),
 		codexsdk.WithSystemPrompt(systemPrompt),
 	) {
@@ -227,7 +227,7 @@ func persistentStructuredOutput() {
 		return
 	}
 
-	err := client.Query(ctx, "Return a JSON object with an answer field containing the string \"four\" for 2+2.")
+	err := client.Query(ctx, codexsdk.Text("Return a JSON object with an answer field containing the string \"four\" for 2+2."))
 	if err != nil {
 		fmt.Printf("Error sending query: %v\n", err)
 

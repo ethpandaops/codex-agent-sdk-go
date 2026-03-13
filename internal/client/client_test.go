@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
 )
 
 // mockTransport implements config.Transport for testing.
@@ -260,7 +261,7 @@ func TestClient_QueryAfterContextCancel(t *testing.T) {
 	// Query should still work with a fresh context
 	// (Query only sends via transport, doesn't depend on readLoop)
 	queryCtx := context.Background()
-	err = client.Query(queryCtx, "test query")
+	err = client.Query(queryCtx, message.NewUserMessageContent("test query"))
 	require.NoError(t, err)
 
 	// Clean up

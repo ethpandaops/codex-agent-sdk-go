@@ -200,7 +200,7 @@ func main() {
 2. Create a simple golang hello world script at /tmp/hello.go
 3. Run the script to test it`
 
-	if err := client.Query(ctx, queryText); err != nil {
+	if err := client.Query(ctx, codexsdk.Text(queryText)); err != nil {
 		fmt.Printf("Failed to send query: %v\n", err)
 
 		return

@@ -1,16 +1,16 @@
 # Examples
 
-This directory contains examples demonstrating the Claude Agent SDK for Go.
+This directory contains examples demonstrating the Codex Agent SDK for Go.
 
 ## API Overview
 
-The SDK provides two main APIs for interacting with Claude:
+The SDK provides two main APIs for interacting with Codex:
 
 ### Top-Level Functions (One-Shot)
 
 Simple, stateless functions for single queries:
 
-- **`Query(ctx, prompt, ...opts)`** - Send a single prompt and receive streaming responses
+- **`Query(ctx, content, ...opts)`** - Send `UserMessageContent` and receive streaming responses
 - **`QueryStream(ctx, messages, ...opts)`** - Send multiple messages via `iter.Seq[StreamingMessage]`
 
 These are ideal for:
@@ -24,7 +24,7 @@ A stateful client for multi-turn conversations and advanced control:
 
 - **`NewClient()`** - Create a new client instance
 - **`client.Start(ctx, ...opts)`** - Initialize the connection
-- **`client.Query(ctx, prompt)`** - Send a message (conversation context preserved)
+- **`client.Query(ctx, content)`** - Send a message (conversation context preserved)
 - **`client.ReceiveMessages(ctx)`** / **`client.ReceiveResponse(ctx)`** - Receive responses
 - **`client.Interrupt(ctx)`** - Interrupt an ongoing response
 - **`client.Close()`** - Clean up resources
@@ -40,6 +40,7 @@ This is ideal for:
 |---------|-------------|
 | `quick_start` | Basic usage of the `Query()` function |
 | `query_stream` | Using `QueryStream()` with `iter.Seq[StreamingMessage]` |
+| `multimodal_input` | Images and local file-path mentions with `UserMessageContent` |
 | `client_multi_turn` | Client API with multi-turn conversations, interrupts, and advanced patterns |
 | `sessions` | Managing conversation sessions |
 | `agents` | Building custom agents |
@@ -68,4 +69,5 @@ go run ./examples/quick_start
 # Run client_multi_turn with a specific sub-example
 go run ./examples/client_multi_turn basic_streaming
 go run ./examples/client_multi_turn all
+go run ./examples/multimodal_input /absolute/path/to/image.png /absolute/path/to/spec.pdf
 ```

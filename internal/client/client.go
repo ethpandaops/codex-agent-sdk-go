@@ -191,17 +191,17 @@ func (c *Client) Start(ctx context.Context, options *config.Options) error {
 	return nil
 }
 
-// StartWithPrompt establishes a connection and immediately sends an initial prompt.
-func (c *Client) StartWithPrompt(
+// StartWithContent establishes a connection and immediately sends an initial message.
+func (c *Client) StartWithContent(
 	ctx context.Context,
-	prompt string,
+	content message.UserMessageContent,
 	options *config.Options,
 ) error {
 	if err := c.Start(ctx, options); err != nil {
 		return err
 	}
 
-	return c.Query(ctx, prompt)
+	return c.Query(ctx, content)
 }
 
 // StartWithStream establishes a connection and streams initial messages.
@@ -267,6 +267,25 @@ func (c *Client) emitInitMessage() {
 	default:
 		// Avoid blocking startup if the buffer is unexpectedly full.
 	}
+}
+
+func mergeQueryContentAndOptionImages(
+	content message.UserMessageContent,
+	images []string,
+) message.UserMessageContent {
+	if len(images) == 0 {
+		return content
+	}
+
+	blocks := append([]message.ContentBlock{}, content.Blocks()...)
+	for _, path := range images {
+		blocks = append(blocks, &message.InputLocalImageBlock{
+			Type: message.BlockTypeLocalImage,
+			Path: path,
+		})
+	}
+
+	return message.NewUserMessageContentBlocks(blocks)
 }
 
 // streamMessages sends streaming messages to the transport.
@@ -361,8 +380,8 @@ func (c *Client) readLoop(ctx context.Context) error {
 	}
 }
 
-// Query sends a user prompt to the agent.
-func (c *Client) Query(ctx context.Context, prompt string, sessionID ...string) error {
+// Query sends user content to the agent.
+func (c *Client) Query(ctx context.Context, content message.UserMessageContent, sessionID ...string) error {
 	if !c.isConnected() {
 		return errors.ErrClientNotConnected
 	}
@@ -372,11 +391,12 @@ func (c *Client) Query(ctx context.Context, prompt string, sessionID ...string) 
 		sid = sessionID[0]
 	}
 
-	c.log.Debug("sending query", slog.Int("prompt_len", len(prompt)), slog.String("session_id", sid))
+	content = mergeQueryContentAndOptionImages(content, c.options.Images)
+	c.log.Debug("sending query", slog.Bool("string_content", content.IsString()), slog.String("session_id", sid))
 
 	payload := map[string]any{
 		"type":               "user",
-		"message":            map[string]any{"role": "user", "content": prompt},
+		"message":            map[string]any{"role": "user", "content": content},
 		"parent_tool_use_id": nil,
 		"session_id":         sid,
 	}

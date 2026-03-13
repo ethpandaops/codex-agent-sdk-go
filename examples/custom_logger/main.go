@@ -178,7 +178,7 @@ func main() {
 
 	log.Info("Running query with logrus-backed logger...")
 
-	for msg, err := range codexsdk.Query(ctx, "What is 2+2? Answer in one short sentence.",
+	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("What is 2+2? Answer in one short sentence."),
 		codexsdk.WithLogger(slogLogger),
 	) {
 		if err != nil {

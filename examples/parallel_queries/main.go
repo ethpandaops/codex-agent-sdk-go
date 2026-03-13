@@ -89,7 +89,7 @@ func parallelTranslations() {
 	for _, style := range styles {
 		g.Go(func() error {
 			text, cost, err := getAssistantText(gCtx, codexsdk.Query(gCtx,
-				fmt.Sprintf("Translate this to French: %q", originalText),
+				codexsdk.Text(fmt.Sprintf("Translate this to French: %q", originalText)),
 				codexsdk.WithSystemPrompt(style.Prompt),
 			))
 			if err != nil {
@@ -140,7 +140,7 @@ func parallelTranslations() {
 	)
 
 	judgeText, judgeCost, err := getAssistantText(ctx, codexsdk.Query(ctx,
-		judgePrompt,
+		codexsdk.Text(judgePrompt),
 		codexsdk.WithSystemPrompt(
 			"You are a French language expert. Evaluate translations for accuracy and style.",
 		),

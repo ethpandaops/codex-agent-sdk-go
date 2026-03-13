@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,36 +54,59 @@ func createStreamingTransport(
 	return subprocess.NewAppServerAdapter(log, options)
 }
 
-func buildInitialUserMessage(prompt string, options *CodexAgentOptions) map[string]any {
+func buildInitialUserMessage(content UserMessageContent, options *CodexAgentOptions) map[string]any {
 	message := map[string]any{
-		"role": "user",
-	}
-
-	if len(options.Images) == 0 {
-		message["content"] = prompt
-	} else {
-		content := make([]map[string]any, 0, len(options.Images)+1)
-		if prompt != "" {
-			content = append(content, map[string]any{
-				"type": "text",
-				"text": prompt,
-			})
-		}
-
-		for _, img := range options.Images {
-			content = append(content, map[string]any{
-				"type": "localImage",
-				"path": img,
-			})
-		}
-
-		message["content"] = content
+		"role":    "user",
+		"content": mergeContentAndOptionImages(content, options.Images),
 	}
 
 	return map[string]any{
 		"type":    "user",
 		"message": message,
 	}
+}
+
+func mergeContentAndOptionImages(content UserMessageContent, images []string) UserMessageContent {
+	if len(images) == 0 {
+		return content
+	}
+
+	blocks := append([]ContentBlock{}, content.Blocks()...)
+	for _, path := range images {
+		blocks = append(blocks, &InputLocalImageBlock{
+			Type: BlockTypeLocalImage,
+			Path: path,
+		})
+	}
+
+	return NewUserMessageContentBlocks(blocks)
+}
+
+func prepareExecContent(
+	content UserMessageContent,
+	options *CodexAgentOptions,
+) (string, []string, bool) {
+	images := append([]string{}, options.Images...)
+
+	if content.IsString() {
+		return content.String(), images, true
+	}
+
+	parts := make([]string, 0, len(content.Blocks()))
+	for _, block := range content.Blocks() {
+		switch b := block.(type) {
+		case *TextBlock:
+			parts = append(parts, b.Text)
+		case *InputMentionBlock:
+			parts = append(parts, formatPathMention(b.Path))
+		case *InputLocalImageBlock:
+			images = append(images, b.Path)
+		default:
+			return "", nil, false
+		}
+	}
+
+	return strings.Join(parts, "\n\n"), images, true
 }
 
 // getLoggerWithComponent returns a logger with the component field set.
@@ -106,7 +130,7 @@ func validateAndConfigureOptions(options *CodexAgentOptions) error {
 // By default, logging is disabled. Use WithLogger to enable logging:
 //
 //	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-//	for msg, err := range Query(ctx, "What is 2+2?",
+//	for msg, err := range Query(ctx, Text("What is 2+2?"),
 //	    WithLogger(logger),
 //	    WithPermissionMode("acceptEdits"),
 //	) {
@@ -128,7 +152,7 @@ func validateAndConfigureOptions(options *CodexAgentOptions) error {
 //nolint:gocyclo // query setup and streaming flow intentionally fan out by transport/backends.
 func Query(
 	ctx context.Context,
-	prompt string,
+	content UserMessageContent,
 	opts ...Option,
 ) iter.Seq2[Message, error] {
 	return func(yield func(Message, error) bool) {
@@ -152,6 +176,8 @@ func Query(
 
 		useAppServerQuery := false
 		backend := config.QueryBackendExec
+		execPrompt := ""
+		execOptions := options
 
 		if options.Transport != nil {
 			transport = options.Transport
@@ -159,6 +185,18 @@ func Query(
 			log.Debug("using injected custom transport")
 		} else {
 			backend = config.SelectQueryBackend(options)
+			if backend == config.QueryBackendExec {
+				prompt, images, ok := prepareExecContent(content, options)
+				if ok {
+					execPrompt = prompt
+					execOptionsCopy := *options
+					execOptionsCopy.Images = images
+					execOptions = &execOptionsCopy
+				} else {
+					backend = config.QueryBackendAppServer
+				}
+			}
+
 			if err := config.ValidateOptionsForBackend(options, backend); err != nil {
 				yield(nil, err)
 
@@ -174,7 +212,7 @@ func Query(
 		} else if options.Transport == nil {
 			log.Debug("creating CLI transport")
 
-			transport = subprocess.NewCLITransport(log, prompt, options)
+			transport = subprocess.NewCLITransport(log, execPrompt, execOptions)
 		}
 
 		log.Info("starting transport")
@@ -219,7 +257,7 @@ func Query(
 		}
 
 		if useAppServerQuery {
-			userMessage := buildInitialUserMessage(prompt, options)
+			userMessage := buildInitialUserMessage(content, options)
 
 			data, err := json.Marshal(userMessage)
 			if err != nil {
@@ -395,8 +433,8 @@ func streamInputMessages(
 // Example usage:
 //
 //	messages := codexsdk.MessagesFromSlice([]codexsdk.StreamingMessage{
-//	    codexsdk.NewUserMessage("Hello"),
-//	    codexsdk.NewUserMessage("How are you?"),
+//	    codexsdk.NewUserMessage(codexsdk.Text("Hello")),
+//	    codexsdk.NewUserMessage(codexsdk.Text("How are you?")),
 //	})
 //
 //	for msg, err := range codexsdk.QueryStream(ctx, messages,
