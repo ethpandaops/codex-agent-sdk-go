@@ -241,14 +241,30 @@ func inspectPersistedSessionExample() {
 
 	fmt.Printf("Found %d persisted sessions for %s\n", len(sessions), cwd)
 
-	messages, err := codexsdk.GetSessionMessages(ctx, result.SessionID, codexsdk.WithCwd(cwd))
-	if err != nil {
-		fmt.Printf("GetSessionMessages failed: %v\n", err)
+	sessionID := result.SessionID
 
-		return
+	messages, err := codexsdk.GetSessionMessages(ctx, sessionID, codexsdk.WithCwd(cwd))
+	if err != nil {
+		if len(sessions) == 0 {
+			fmt.Printf("GetSessionMessages failed: %v\n", err)
+
+			return
+		}
+
+		fmt.Printf("GetSessionMessages for result session failed: %v\n", err)
+		fmt.Printf("Falling back to most recent persisted session: %s\n", sessions[0].SessionID)
+
+		sessionID = sessions[0].SessionID
+
+		messages, err = codexsdk.GetSessionMessages(ctx, sessionID, codexsdk.WithCwd(cwd))
+		if err != nil {
+			fmt.Printf("Fallback GetSessionMessages failed: %v\n", err)
+
+			return
+		}
 	}
 
-	fmt.Printf("Loaded %d persisted messages for session %s\n", len(messages), result.SessionID)
+	fmt.Printf("Loaded %d persisted messages for session %s\n", len(messages), sessionID)
 	fmt.Println()
 }
 

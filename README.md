@@ -249,6 +249,9 @@ Options are backend-dependent. Unsupported combinations fail fast with `ErrUnsup
 | `WithCwd("/path")` / `WithCliPath("/path/codex")` / `WithEnv(...)` | Process/runtime setup |
 | `WithPermissionMode("acceptEdits")` / `WithSandbox("workspace-write")` | Permission/sandbox behavior |
 | `WithSystemPrompt("...")` / `WithSystemPromptPreset(...)` | System instructions |
+| `WithDeveloperInstructions("...")` | Additional agent instructions (separate from system prompt) |
+| `WithPersonality("pragmatic")` | Agent response personality (`"none"`, `"friendly"`, `"pragmatic"`) |
+| `WithServiceTier("fast")` | API service tier (`"fast"`, `"flex"`) |
 | `WithImages(...)` / `WithConfig(...)` | Codex-native CLI image inputs/config |
 | `WithOutputSchema(json)` | Passes `--output-schema` |
 | `WithOutputFormat(map[string]any{...})` | Structured output wrapper/schema for app-server flow |
@@ -275,7 +278,7 @@ Options are backend-dependent. Unsupported combinations fail fast with `ErrUnsup
 |---|---|
 | `WithResume("session-id")` / `WithForkSession(true)` | Resume/fork sessions |
 | `WithContinueConversation(true)` | Continue prior conversation |
-| `WithEffort(codexsdk.EffortHigh)` | Extended thinking effort |
+| `WithEffort(codexsdk.EffortMinimal)` | Reasoning effort (`EffortNone`, `EffortMinimal`, `EffortLow`, `EffortMedium`, `EffortHigh`, `EffortMax`) |
 | `WithIncludePartialMessages(true)` | Emit streaming deltas as `StreamEvent` |
 | `WithAddDirs("/extra/path")` | Additional accessible directories |
 | `WithExtraArgs(map[string]*string{...})` | Raw CLI flags |

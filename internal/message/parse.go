@@ -151,57 +151,10 @@ func convertCodexItem(item *CodexItem, eventType EventType) *AssistantMessage {
 		}
 
 	case ItemTypeCommandExec:
-		toolUse := &ToolUseBlock{
-			Type: BlockTypeToolUse,
-			ID:   item.ID,
-			Name: "Bash",
-			Input: map[string]any{
-				"command": item.Command,
-			},
-		}
-		msg.Content = []ContentBlock{toolUse}
-
-		// For completed events, add result
-		if eventType == EventItemCompleted {
-			result := &ToolResultBlock{
-				Type:      BlockTypeToolResult,
-				ToolUseID: item.ID,
-				Content: []ContentBlock{
-					&TextBlock{Type: BlockTypeText, Text: item.AggregatedOutput},
-				},
-			}
-
-			if item.ExitCode != nil && *item.ExitCode != 0 {
-				result.IsError = true
-			}
-
-			msg.Content = append(msg.Content, result)
-		}
+		msg.Content = convertCommandExec(item, eventType)
 
 	case ItemTypeFileChange:
-		toolName := "Edit"
-
-		for _, change := range item.Changes {
-			if change.Kind == "create" {
-				toolName = "Write"
-
-				break
-			}
-		}
-
-		input := map[string]any{}
-		if len(item.Changes) > 0 {
-			input["file_path"] = item.Changes[0].Path
-		}
-
-		msg.Content = []ContentBlock{
-			&ToolUseBlock{
-				Type:  BlockTypeToolUse,
-				ID:    item.ID,
-				Name:  toolName,
-				Input: input,
-			},
-		}
+		msg.Content = convertFileChange(item)
 
 	case ItemTypeMCPToolCall:
 		toolName := item.Tool
@@ -209,14 +162,7 @@ func convertCodexItem(item *CodexItem, eventType EventType) *AssistantMessage {
 			toolName = item.Server + ":" + item.Tool
 		}
 
-		msg.Content = []ContentBlock{
-			&ToolUseBlock{
-				Type:  BlockTypeToolUse,
-				ID:    item.ID,
-				Name:  toolName,
-				Input: map[string]any{},
-			},
-		}
+		msg.Content = convertCallableToolItem(item, eventType, toolName)
 
 	case ItemTypeDynamicToolCall:
 		toolName := item.Name
@@ -224,29 +170,9 @@ func convertCodexItem(item *CodexItem, eventType EventType) *AssistantMessage {
 			toolName = item.Tool
 		}
 
-		toolName = normalizePublicMCPToolName(toolName)
-
-		toolUse := &ToolUseBlock{
-			Type:  BlockTypeToolUse,
-			ID:    item.ID,
-			Name:  toolName,
-			Input: item.Arguments,
-		}
-		msg.Content = []ContentBlock{toolUse}
-
-		if eventType == EventItemCompleted {
-			result := &ToolResultBlock{
-				Type:      BlockTypeToolResult,
-				ToolUseID: item.ID,
-				Content:   contentItemsToBlocks(item.ContentItems),
-			}
-
-			if item.Success != nil && !*item.Success {
-				result.IsError = true
-			}
-
-			msg.Content = append(msg.Content, result)
-		}
+		msg.Content = convertCallableToolItem(
+			item, eventType, normalizePublicMCPToolName(toolName),
+		)
 
 	case ItemTypeWebSearch:
 		msg.Content = []ContentBlock{
@@ -260,6 +186,37 @@ func convertCodexItem(item *CodexItem, eventType EventType) *AssistantMessage {
 			},
 		}
 
+	case ItemTypeTodoList:
+		msg.Content = convertTodoList(item)
+
+	case ItemTypeToolSearch:
+		toolName := item.Name
+		if toolName == "" {
+			toolName = "ToolSearch"
+		}
+
+		msg.Content = convertCallableToolItem(item, eventType, toolName)
+
+	case ItemTypeImageGeneration:
+		toolName := item.Name
+		if toolName == "" {
+			toolName = "ImageGeneration"
+		}
+
+		msg.Content = convertCallableToolItem(item, eventType, toolName)
+
+	case ItemTypeCustomToolCall:
+		toolName := item.Name
+		if toolName == "" {
+			toolName = item.Tool
+		}
+
+		if toolName == "" {
+			toolName = "CustomTool"
+		}
+
+		msg.Content = convertCallableToolItem(item, eventType, toolName)
+
 	case ItemTypeError:
 		msg.Content = []ContentBlock{
 			&TextBlock{Type: BlockTypeText, Text: "Error: " + item.Message},
@@ -268,13 +225,126 @@ func convertCodexItem(item *CodexItem, eventType EventType) *AssistantMessage {
 		msg.Error = &errType
 
 	default:
-		// Unknown item type — pass through as text
+		// Unknown item type — preserve any available text or fall back to the
+		// raw item payload so new Codex item variants don't collapse to empty
+		// assistant messages.
+		text := item.Text
+		if strings.TrimSpace(text) == "" {
+			text = stringifyRawItem(item.Raw)
+		}
+
 		msg.Content = []ContentBlock{
-			&TextBlock{Type: BlockTypeText, Text: item.Text},
+			&TextBlock{Type: BlockTypeText, Text: text},
 		}
 	}
 
 	return msg
+}
+
+// convertCommandExec builds content blocks for a command_execution item.
+func convertCommandExec(item *CodexItem, eventType EventType) []ContentBlock {
+	toolUse := &ToolUseBlock{
+		Type: BlockTypeToolUse,
+		ID:   item.ID,
+		Name: "Bash",
+		Input: map[string]any{
+			"command": item.Command,
+		},
+	}
+
+	blocks := []ContentBlock{toolUse}
+
+	if eventType == EventItemCompleted {
+		result := &ToolResultBlock{
+			Type:      BlockTypeToolResult,
+			ToolUseID: item.ID,
+			Content: []ContentBlock{
+				&TextBlock{Type: BlockTypeText, Text: item.AggregatedOutput},
+			},
+		}
+
+		if item.ExitCode != nil && *item.ExitCode != 0 {
+			result.IsError = true
+		}
+
+		blocks = append(blocks, result)
+	}
+
+	return blocks
+}
+
+// convertFileChange builds content blocks for a file_change item.
+func convertFileChange(item *CodexItem) []ContentBlock {
+	toolName := "Edit"
+
+	for _, change := range item.Changes {
+		if change.Kind == "create" || change.Kind == "add" {
+			toolName = "Write"
+
+			break
+		}
+	}
+
+	input := map[string]any{}
+	if len(item.Changes) > 0 {
+		input["file_path"] = item.Changes[0].Path
+	}
+
+	return []ContentBlock{
+		&ToolUseBlock{
+			Type:  BlockTypeToolUse,
+			ID:    item.ID,
+			Name:  toolName,
+			Input: input,
+		},
+	}
+}
+
+// convertTodoList builds a text block from a todo_list item.
+func convertTodoList(item *CodexItem) []ContentBlock {
+	lines := make([]string, 0, len(item.Items))
+
+	for _, todoItem := range item.Items {
+		marker := "[ ]"
+		if todoItem.Completed {
+			marker = "[x]"
+		}
+
+		lines = append(lines, fmt.Sprintf("- %s %s", marker, todoItem.Text))
+	}
+
+	return []ContentBlock{
+		&TextBlock{Type: BlockTypeText, Text: strings.Join(lines, "\n")},
+	}
+}
+
+// convertCallableToolItem builds content blocks for tool call items that may
+// include a result on completion (dynamic_tool_call, custom_tool_call).
+func convertCallableToolItem(item *CodexItem, eventType EventType, toolName string) []ContentBlock {
+	toolUse := &ToolUseBlock{
+		Type:  BlockTypeToolUse,
+		ID:    item.ID,
+		Name:  toolName,
+		Input: item.Arguments,
+	}
+
+	blocks := []ContentBlock{toolUse}
+
+	if eventType == EventItemCompleted {
+		result := &ToolResultBlock{
+			Type:      BlockTypeToolResult,
+			ToolUseID: item.ID,
+			Content:   contentItemsToBlocks(item.ContentItems),
+		}
+
+		if item.Success != nil && !*item.Success {
+			result.IsError = true
+		}
+
+		blocks = append(blocks, result)
+	}
+
+	return blocks
 }
 
 func contentItemsToBlocks(items []ContentItem) []ContentBlock {
@@ -288,6 +358,17 @@ func contentItemsToBlocks(items []ContentItem) []ContentBlock {
 		switch item.Type {
 		case "inputText", "text":
 			blocks = append(blocks, &TextBlock{Type: BlockTypeText, Text: item.Text})
+		case "inputImage":
+			url := item.Text
+			if url == "" {
+				url, _ = item.Raw["imageUrl"].(string)
+			}
+
+			if url == "" {
+				url, _ = item.Raw["image_url"].(string)
+			}
+
+			blocks = append(blocks, &InputImageBlock{Type: BlockTypeImage, URL: url})
 		default:
 			if rawText := stringifyContentItem(item); rawText != "" {
 				blocks = append(blocks, &TextBlock{Type: BlockTypeText, Text: rawText})
@@ -304,6 +385,19 @@ func stringifyContentItem(item ContentItem) string {
 	}
 
 	data, err := json.Marshal(item.Raw)
+	if err != nil {
+		return ""
+	}
+
+	return string(data)
+}
+
+func stringifyRawItem(raw map[string]any) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	data, err := json.Marshal(raw)
 	if err != nil {
 		return ""
 	}
@@ -737,6 +831,22 @@ func parseContentBlock(data map[string]any) (ContentBlock, error) {
 		}
 
 		return block, nil
+	case BlockTypeImage:
+		url, _ := data["url"].(string)
+		if url == "" {
+			url, _ = data["image_url"].(string)
+		}
+
+		return &InputImageBlock{Type: BlockTypeImage, URL: url}, nil
+	case BlockTypeLocalImage, blockTypeLocalImageWire:
+		path, _ := data["path"].(string)
+
+		return &InputLocalImageBlock{Type: BlockTypeLocalImage, Path: path}, nil
+	case BlockTypeMention:
+		name, _ := data["name"].(string)
+		path, _ := data["path"].(string)
+
+		return &InputMentionBlock{Type: BlockTypeMention, Name: name, Path: path}, nil
 	default:
 		return nil, fmt.Errorf("unknown content block type: %s", blockType)
 	}

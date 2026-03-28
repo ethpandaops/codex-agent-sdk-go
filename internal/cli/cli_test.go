@@ -10,6 +10,7 @@ import (
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/version"
 	"github.com/stretchr/testify/require"
 )
 
@@ -994,4 +995,13 @@ func TestBuildExecArgs_AlwaysContainsBaseFlags(t *testing.T) {
 			require.Contains(t, args, "--skip-git-repo-check")
 		})
 	}
+}
+
+func TestBuildEnvironment_VersionFromConstant(t *testing.T) {
+	env := BuildEnvironment(&config.Options{})
+
+	expected := "CODEX_CLI_SDK_VERSION=" + version.Version
+
+	found := slices.Contains(env, expected)
+	require.True(t, found, "expected %q in env", expected)
 }

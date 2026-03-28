@@ -73,6 +73,10 @@ const (
 	EffortHigh = config.EffortHigh
 	// EffortMax uses maximum thinking depth.
 	EffortMax = config.EffortMax
+	// EffortNone disables reasoning entirely.
+	EffortNone = config.EffortNone
+	// EffortMinimal uses minimal reasoning.
+	EffortMinimal = config.EffortMinimal
 )
 
 // AgentDefinition defines a custom agent configuration.

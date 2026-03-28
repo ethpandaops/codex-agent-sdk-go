@@ -33,6 +33,10 @@ const (
 	EffortHigh Effort = "high"
 	// EffortMax uses maximum thinking depth.
 	EffortMax Effort = "xhigh"
+	// EffortNone disables reasoning entirely.
+	EffortNone Effort = "none"
+	// EffortMinimal uses minimal reasoning.
+	EffortMinimal Effort = "minimal"
 )
 
 // ThinkingConfig controls extended thinking behavior.
@@ -97,6 +101,19 @@ type Options struct {
 	// Effort controls thinking depth.
 	// Passed to CLI via initialization; support depends on Codex CLI version.
 	Effort *Effort
+
+	// Personality controls the agent's response personality.
+	// Valid values: "none", "friendly", "pragmatic".
+	Personality string
+
+	// ServiceTier controls the service tier for API requests.
+	// Valid values: "fast", "flex".
+	ServiceTier string
+
+	// DeveloperInstructions provides additional instructions for the agent.
+	// This is separate from SystemPrompt and is passed as developerInstructions
+	// in the thread/start payload.
+	DeveloperInstructions string
 
 	// MCPServers configures external MCP servers to connect to.
 	// SDK MCP servers are registered and respond to mcp_message requests from CLI.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/permission"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/userinput"
 	"github.com/stretchr/testify/require"
 )
@@ -571,4 +572,318 @@ func TestSession_NeedsInitialization_WithOnUserInput(t *testing.T) {
 
 func TestMapPermissionToApprovalPolicy_Plan(t *testing.T) {
 	require.Equal(t, "on-request", mapPermissionToApprovalPolicy("plan"))
+}
+
+func TestSession_BuildInitializePayload_Personality(t *testing.T) {
+	session := &Session{
+		log:             slog.Default(),
+		options:         &config.Options{Personality: "pragmatic"},
+		sdkMcpServers:   make(map[string]mcp.ServerInstance, 4),
+		sdkDynamicTools: make(map[string]*config.DynamicTool, 4),
+	}
+
+	payload := session.buildInitializePayload()
+	require.Equal(t, "pragmatic", payload["personality"])
+}
+
+func TestSession_BuildInitializePayload_ServiceTier(t *testing.T) {
+	session := &Session{
+		log:             slog.Default(),
+		options:         &config.Options{ServiceTier: "fast"},
+		sdkMcpServers:   make(map[string]mcp.ServerInstance, 4),
+		sdkDynamicTools: make(map[string]*config.DynamicTool, 4),
+	}
+
+	payload := session.buildInitializePayload()
+	require.Equal(t, "fast", payload["serviceTier"])
+}
+
+func TestSession_BuildInitializePayload_DeveloperInstructions(t *testing.T) {
+	session := &Session{
+		log:             slog.Default(),
+		options:         &config.Options{DeveloperInstructions: "Always respond in JSON"},
+		sdkMcpServers:   make(map[string]mcp.ServerInstance, 4),
+		sdkDynamicTools: make(map[string]*config.DynamicTool, 4),
+	}
+
+	payload := session.buildInitializePayload()
+	require.Equal(t, "Always respond in JSON", payload["developerInstructions"])
+}
+
+func TestSession_HandleFileChangeApproval_NoCallback(t *testing.T) {
+	session := NewSession(slog.Default(), nil, &config.Options{})
+
+	resp, err := session.HandleFileChangeApproval(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype":  "item_fileChange/requestApproval",
+			"itemId":   "item_1",
+			"threadId": "thread_1",
+			"turnId":   "turn_1",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "accept", resp["decision"])
+}
+
+func TestSession_HandleFileChangeApproval_WithCallback(t *testing.T) {
+	var (
+		capturedTool  string
+		capturedInput map[string]any
+	)
+
+	opts := &config.Options{
+		CanUseTool: func(_ context.Context, toolName string, input map[string]any, _ *permission.Context) (permission.Result, error) {
+			capturedTool = toolName
+			capturedInput = input
+
+			return &permission.ResultDeny{}, nil
+		},
+	}
+
+	session := NewSession(slog.Default(), nil, opts)
+
+	resp, err := session.HandleFileChangeApproval(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype":   "item_fileChange/requestApproval",
+			"itemId":    "item_42",
+			"threadId":  "thread_1",
+			"turnId":    "turn_1",
+			"grantRoot": "/tmp/project",
+			"reason":    "needs write access",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "decline", resp["decision"])
+	require.Equal(t, "Edit", capturedTool)
+	require.Equal(t, "item_42", capturedInput["itemId"])
+	require.Equal(t, "/tmp/project", capturedInput["grantRoot"])
+	require.Equal(t, "needs write access", capturedInput["reason"])
+}
+
+func TestSession_HandleFileChangeApproval_AllowedWritePolicyAcceptsEditApproval(t *testing.T) {
+	opts := &config.Options{
+		AllowedTools: []string{"Write"},
+	}
+	require.NoError(t, config.ConfigureToolPermissionPolicy(opts))
+
+	session := NewSession(slog.Default(), nil, opts)
+
+	resp, err := session.HandleFileChangeApproval(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype": "item_fileChange/requestApproval",
+			"itemId":  "item_create",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "accept", resp["decision"])
+}
+
+func TestSession_HandleFileChangeApproval_LegacyApplyPatchUsesWriteForAdds(t *testing.T) {
+	var capturedTool string
+
+	opts := &config.Options{
+		CanUseTool: func(_ context.Context, toolName string, _ map[string]any, _ *permission.Context) (permission.Result, error) {
+			capturedTool = toolName
+
+			return &permission.ResultAllow{}, nil
+		},
+	}
+
+	session := NewSession(slog.Default(), nil, opts)
+
+	resp, err := session.HandleFileChangeApproval(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype": "applyPatchApproval",
+			"fileChanges": map[string]any{
+				"/tmp/new.txt": map[string]any{
+					"type":    "add",
+					"content": "hello",
+				},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "accept", resp["decision"])
+	require.Equal(t, "Write", capturedTool)
+}
+
+func TestSession_HandlePermissionsApproval_NoCallback(t *testing.T) {
+	session := NewSession(slog.Default(), nil, &config.Options{})
+
+	resp, err := session.HandlePermissionsApproval(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype":  "item_permissions/requestApproval",
+			"itemId":   "item_1",
+			"threadId": "thread_1",
+			"turnId":   "turn_1",
+			"permissions": map[string]any{
+				"fileSystem": map[string]any{"write": []any{"/tmp"}},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "accept", resp["decision"])
+}
+
+func TestSession_HandlePermissionsApproval_WithCallback(t *testing.T) {
+	var (
+		capturedTool  string
+		capturedInput map[string]any
+	)
+
+	opts := &config.Options{
+		CanUseTool: func(_ context.Context, toolName string, input map[string]any, _ *permission.Context) (permission.Result, error) {
+			capturedTool = toolName
+			capturedInput = input
+
+			return &permission.ResultAllow{}, nil
+		},
+	}
+
+	session := NewSession(slog.Default(), nil, opts)
+
+	resp, err := session.HandlePermissionsApproval(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype":  "item_permissions/requestApproval",
+			"itemId":   "item_1",
+			"threadId": "thread_1",
+			"turnId":   "turn_1",
+			"permissions": map[string]any{
+				"network": map[string]any{"enabled": true},
+			},
+			"reason": "need network",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "accept", resp["decision"])
+	require.Equal(t, "Permissions", capturedTool)
+	require.NotNil(t, capturedInput["permissions"])
+	require.Equal(t, "need network", capturedInput["reason"])
+}
+
+func TestSession_HandlePermissionsApproval_AllowedWritePolicyBypassesFilter(t *testing.T) {
+	opts := &config.Options{
+		AllowedTools: []string{"Write"},
+	}
+	require.NoError(t, config.ConfigureToolPermissionPolicy(opts))
+
+	session := NewSession(slog.Default(), nil, opts)
+
+	resp, err := session.HandlePermissionsApproval(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype": "item_permissions/requestApproval",
+			"permissions": map[string]any{
+				"fileSystem": map[string]any{"write": []any{"/tmp"}},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "accept", resp["decision"])
+}
+
+func TestSession_HandleMCPElicitation(t *testing.T) {
+	session := NewSession(slog.Default(), nil, &config.Options{})
+
+	resp, err := session.HandleMCPElicitation(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype": "mcpServer_elicitation/request",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "accept", resp["action"])
+}
+
+func TestSession_HandleCanUseTool_LegacyExecCommandApprovalArray(t *testing.T) {
+	var (
+		capturedTool  string
+		capturedInput map[string]any
+	)
+
+	opts := &config.Options{
+		CanUseTool: func(_ context.Context, toolName string, input map[string]any, _ *permission.Context) (permission.Result, error) {
+			capturedTool = toolName
+			capturedInput = input
+
+			return &permission.ResultAllow{}, nil
+		},
+	}
+
+	session := NewSession(slog.Default(), nil, opts)
+
+	resp, err := session.HandleCanUseTool(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype": "execCommandApproval",
+			"command": []any{"rg", "-n", "todo", "."},
+			"cwd":     "/tmp/project",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "accept", resp["decision"])
+	require.Equal(t, "Bash", capturedTool)
+	require.Equal(t, "rg -n todo .", capturedInput["command"])
+	require.Equal(t, "/tmp/project", capturedInput["cwd"])
+}
+
+func TestSession_HandleChatGPTAuthTokensRefresh_UsesExternalAuthEnv(t *testing.T) {
+	t.Setenv("CODEX_CHATGPT_ACCESS_TOKEN", "token-123")
+	t.Setenv("CODEX_CHATGPT_ACCOUNT_ID", "acct-123")
+	t.Setenv("CODEX_CHATGPT_PLAN_TYPE", "plus")
+
+	session := NewSession(slog.Default(), nil, &config.Options{})
+
+	resp, err := session.HandleChatGPTAuthTokensRefresh(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype": "account_chatgptAuthTokens/refresh",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "token-123", resp["accessToken"])
+	require.Equal(t, "acct-123", resp["chatgptAccountId"])
+	require.Equal(t, "plus", resp["chatgptPlanType"])
+}
+
+func TestSession_HandleChatGPTAuthTokensRefresh_MissingEnvErrors(t *testing.T) {
+	session := NewSession(slog.Default(), nil, &config.Options{})
+
+	_, err := session.HandleChatGPTAuthTokensRefresh(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype": "account_chatgptAuthTokens/refresh",
+		},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "chatgpt auth token refresh requested")
+}
+
+func TestConvertMCPContentToItems_ImageContent(t *testing.T) {
+	result := map[string]any{
+		"content": []any{
+			map[string]any{"type": "text", "text": "hello"},
+			map[string]any{"type": "image", "image_url": "data:image/png;base64,abc"},
+			map[string]any{"type": "image", "url": "https://example.com/img.png"},
+		},
+	}
+
+	items := convertMCPContentToItems(result)
+
+	require.Len(t, items, 3)
+
+	require.Equal(t, "inputText", items[0]["type"])
+	require.Equal(t, "hello", items[0]["text"])
+
+	require.Equal(t, "inputImage", items[1]["type"])
+	require.Equal(t, "data:image/png;base64,abc", items[1]["imageUrl"])
+
+	require.Equal(t, "inputImage", items[2]["type"])
+	require.Equal(t, "https://example.com/img.png", items[2]["imageUrl"])
 }

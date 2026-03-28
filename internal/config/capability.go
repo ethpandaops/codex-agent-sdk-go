@@ -55,6 +55,9 @@ var optionCapabilities = []OptionCapability{
 		AppServer: SupportUnsupported, Notes: "hooks are a CLI-internal concept, not exposed over app-server protocol",
 	},
 	{Field: "Effort", OptionName: "WithEffort", Exec: SupportUnsupported, AppServer: SupportSupported},
+	{Field: "Personality", OptionName: "WithPersonality", Exec: SupportUnsupported, AppServer: SupportSupported},
+	{Field: "ServiceTier", OptionName: "WithServiceTier", Exec: SupportUnsupported, AppServer: SupportSupported},
+	{Field: "DeveloperInstructions", OptionName: "WithDeveloperInstructions", Exec: SupportUnsupported, AppServer: SupportSupported},
 	{Field: "MCPServers", OptionName: "WithMCPServers", Exec: SupportSupported, AppServer: SupportSupported},
 	{Field: "SDKTools", OptionName: "WithSDKTools", Exec: SupportUnsupported, AppServer: SupportSupported},
 	{Field: "CanUseTool", OptionName: "WithCanUseTool", Exec: SupportUnsupported, AppServer: SupportSupported},
@@ -154,6 +157,9 @@ func EnabledOptionFields(opts *Options) map[string]bool {
 	set("Env", len(opts.Env) > 0)
 	set("Hooks", len(opts.Hooks) > 0)
 	set("Effort", opts.Effort != nil)
+	set("Personality", opts.Personality != "")
+	set("ServiceTier", opts.ServiceTier != "")
+	set("DeveloperInstructions", opts.DeveloperInstructions != "")
 	set("MCPServers", len(opts.MCPServers) > 0)
 	set("SDKTools", len(opts.SDKTools) > 0)
 	set("CanUseTool", opts.CanUseTool != nil)

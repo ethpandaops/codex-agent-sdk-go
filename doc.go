@@ -134,6 +134,27 @@
 //	    // ...
 //	}
 //
+// # Personality, Service Tier, and Developer Instructions
+//
+// Control the agent's response style with WithPersonality:
+//
+//	codexsdk.WithPersonality("pragmatic") // "none", "friendly", "pragmatic"
+//
+// Select the API service tier with WithServiceTier:
+//
+//	codexsdk.WithServiceTier("fast") // "fast" or "flex"
+//
+// Provide additional agent instructions with WithDeveloperInstructions,
+// which maps to the Codex CLI's developerInstructions field and is
+// separate from WithSystemPrompt:
+//
+//	codexsdk.WithDeveloperInstructions("Always respond in three bullet points.")
+//
+// Effort levels now include EffortNone and EffortMinimal in addition to
+// EffortLow, EffortMedium, EffortHigh, and EffortMax:
+//
+//	codexsdk.WithEffort(codexsdk.EffortMinimal)
+//
 // # Plan Mode and User Input Callbacks
 //
 // When using plan mode, the agent can ask the user questions via

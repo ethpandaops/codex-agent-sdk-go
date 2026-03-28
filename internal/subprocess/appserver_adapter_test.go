@@ -1713,10 +1713,16 @@ func TestAppServerAdapter_ItemTypeMapping(t *testing.T) {
 		snakeCase string
 	}{
 		{"agentMessage", "agent_message"},
+		{"collabAgentToolCall", "collab_agent_tool_call"},
 		{"commandExecution", "command_execution"},
+		{"contextCompaction", "context_compaction"},
 		{"dynamicToolCall", "dynamic_tool_call"},
+		{"enteredReviewMode", "entered_review_mode"},
+		{"exitedReviewMode", "exited_review_mode"},
 		{"fileChange", "file_change"},
+		{"imageView", "image_view"},
 		{"mcpToolCall", "mcp_tool_call"},
+		{"plan", "plan"},
 		{"webSearch", "web_search"},
 		{"todoList", "todo_list"},
 		{"reasoning", "reasoning"},
@@ -1921,6 +1927,57 @@ func TestAppServerAdapter_UserMessageItem(t *testing.T) {
 			require.Equal(t, "msg_001", msg["uuid"])
 		case <-time.After(time.Second):
 			t.Fatal("expected user message from userMessage item/started")
+		}
+	})
+
+	t.Run("item/started with structured userMessage preserves non-text blocks", func(t *testing.T) {
+		mock := newMockAppServerRPC()
+		adapter := newTestAdapter(mock)
+
+		defer func() {
+			close(adapter.done)
+			mock.Close()
+			adapter.wg.Wait()
+		}()
+
+		mock.notifyCh <- &RPCNotification{
+			JSONRPC: "2.0",
+			Method:  "item/started",
+			Params: json.RawMessage(`{
+				"item":{
+					"type":"userMessage",
+					"id":"msg_002",
+					"content":[
+						{"type":"text","text":"Read this file"},
+						{"type":"mention","name":"notes.txt","path":"/tmp/notes.txt"},
+						{"type":"image","url":"data:image/png;base64,AQID"}
+					]
+				}
+			}`),
+		}
+
+		select {
+		case msg := <-adapter.messages:
+			require.Equal(t, "user", msg["type"])
+
+			message, ok := msg["message"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "user", message["role"])
+
+			content, ok := message["content"].([]any)
+			require.True(t, ok, "structured userMessage content should remain a block array")
+			require.Len(t, content, 3, "non-text userMessage blocks should not be dropped")
+
+			mention, ok := content[1].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "mention", mention["type"])
+			require.Equal(t, "/tmp/notes.txt", mention["path"])
+
+			image, ok := content[2].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "image", image["type"])
+		case <-time.After(time.Second):
+			t.Fatal("expected user message from structured userMessage item/started")
 		}
 	})
 
@@ -2551,6 +2608,44 @@ func TestAppServerAdapter_DeltaEmission_WhenEnabled(t *testing.T) {
 	}
 }
 
+func TestAppServerAdapter_ReasoningTextDeltaEmission_WhenEnabled(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.includePartialMessages = true
+	adapter.threadID = "thread_test"
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/reasoning/textDelta",
+		Params:  json.RawMessage(`{"delta":"thinking","itemId":"reason_1","contentIndex":0,"threadId":"thread_test","turnId":"turn_1"}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		require.Equal(t, "stream_event", msg["type"],
+			"reasoning text deltas should surface as partial stream events instead of generic system messages")
+		require.Equal(t, "reason_1", msg["uuid"])
+		require.Equal(t, "thread_test", msg["session_id"])
+
+		event, ok := msg["event"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "content_block_delta", event["type"])
+
+		delta, ok := event["delta"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "text_delta", delta["type"])
+		require.Equal(t, "thinking", delta["text"])
+	case <-time.After(time.Second):
+		t.Fatal("expected stream_event message from reasoning delta")
+	}
+}
+
 func TestAppServerAdapter_UnknownNotification_PassThrough(t *testing.T) {
 	mock := newMockAppServerRPC()
 	adapter := newTestAdapter(mock)
@@ -2578,4 +2673,140 @@ func TestAppServerAdapter_UnknownNotification_PassThrough(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("expected pass-through system message for unknown notification")
 	}
+}
+
+func TestBuildInitializeRPC_Personality(t *testing.T) {
+	requestData := map[string]any{
+		"subtype":     "initialize",
+		"personality": "pragmatic",
+	}
+
+	method, params, _, err := buildInitializeRPC(requestData)
+	require.NoError(t, err)
+	require.Equal(t, "thread/start", method)
+	require.Equal(t, "pragmatic", params["personality"])
+}
+
+func TestBuildInitializeRPC_ServiceTier(t *testing.T) {
+	requestData := map[string]any{
+		"subtype":     "initialize",
+		"serviceTier": "fast",
+	}
+
+	method, params, _, err := buildInitializeRPC(requestData)
+	require.NoError(t, err)
+	require.Equal(t, "thread/start", method)
+	require.Equal(t, "fast", params["serviceTier"])
+}
+
+func TestBuildInitializeRPC_DeveloperInstructions(t *testing.T) {
+	requestData := map[string]any{
+		"subtype":               "initialize",
+		"developerInstructions": "Always respond in JSON",
+	}
+
+	method, params, _, err := buildInitializeRPC(requestData)
+	require.NoError(t, err)
+	require.Equal(t, "thread/start", method)
+	require.Equal(t, "Always respond in JSON", params["developerInstructions"])
+}
+
+func TestBuildInitializeRPC_DeveloperInstructionsPrecedence(t *testing.T) {
+	requestData := map[string]any{
+		"subtype":               "initialize",
+		"systemPrompt":          "from system prompt",
+		"developerInstructions": "from dev instructions",
+	}
+
+	method, params, _, err := buildInitializeRPC(requestData)
+	require.NoError(t, err)
+	require.Equal(t, "thread/start", method)
+	require.Equal(t, "from dev instructions", params["developerInstructions"],
+		"explicit developerInstructions should take precedence over systemPrompt")
+}
+
+func TestBuildInitializeRPC_SystemPromptFallback(t *testing.T) {
+	requestData := map[string]any{
+		"subtype":      "initialize",
+		"systemPrompt": "from system prompt",
+	}
+
+	method, params, _, err := buildInitializeRPC(requestData)
+	require.NoError(t, err)
+	require.Equal(t, "thread/start", method)
+	require.Equal(t, "from system prompt", params["developerInstructions"],
+		"systemPrompt should still map to developerInstructions when no explicit DeveloperInstructions")
+}
+
+func TestCamelToSnake_NewItemTypes(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"toolSearchCall", "tool_search_call"},
+		{"imageGenerationCall", "image_generation_call"},
+		{"customToolCall", "custom_tool_call"},
+		{"agentMessage", "agent_message"},
+		{"unknownType", "unknownType"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			require.Equal(t, tt.expected, camelToSnake(tt.input))
+		})
+	}
+}
+
+func TestTranslateErrorNotification(t *testing.T) {
+	adapter := &AppServerAdapter{
+		log: slog.Default(),
+	}
+
+	t.Run("nested error object", func(t *testing.T) {
+		result := adapter.translateErrorNotification(map[string]any{
+			"error": map[string]any{
+				"message": "web_search is incompatible with minimal effort",
+			},
+			"threadId": "thread_1",
+		})
+
+		require.Equal(t, "error", result["type"])
+		require.Equal(t, "web_search is incompatible with minimal effort", result["message"])
+	})
+
+	t.Run("top-level message field", func(t *testing.T) {
+		result := adapter.translateErrorNotification(map[string]any{
+			"message": "something went wrong",
+		})
+
+		require.Equal(t, "error", result["type"])
+		require.Equal(t, "something went wrong", result["message"])
+	})
+
+	t.Run("empty error falls back to unknown", func(t *testing.T) {
+		result := adapter.translateErrorNotification(map[string]any{})
+
+		require.Equal(t, "error", result["type"])
+		require.Equal(t, "unknown error", result["message"])
+	})
+}
+
+func TestTranslateNotification_ErrorMethod(t *testing.T) {
+	adapter := &AppServerAdapter{
+		log:      slog.Default(),
+		messages: make(chan map[string]any, 10),
+		done:     make(chan struct{}),
+	}
+
+	notif := &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "error",
+		Params:  json.RawMessage(`{"error":{"message":"test error from CLI"},"threadId":"t1"}`),
+	}
+
+	event := adapter.translateNotification(notif)
+
+	require.NotNil(t, event)
+	require.Equal(t, "error", event["type"])
+	require.Equal(t, "test error from CLI", event["message"])
 }
