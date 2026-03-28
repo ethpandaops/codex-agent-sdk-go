@@ -110,3 +110,62 @@ func TestConfigureToolPermissionPolicy_IncludesToolsListInAllowSet(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, "deny", denied.GetBehavior())
 }
+
+func TestConfigureToolPermissionPolicy_TreatsEditAndWriteAsEquivalent(t *testing.T) {
+	t.Parallel()
+
+	opts := &Options{
+		AllowedTools: []string{"Write"},
+	}
+
+	err := ConfigureToolPermissionPolicy(opts)
+	require.NoError(t, err)
+	require.NotNil(t, opts.CanUseTool)
+
+	allowed, err := opts.CanUseTool(context.Background(), "Edit", nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "allow", allowed.GetBehavior())
+
+	opts = &Options{
+		DisallowedTools: []string{"Edit"},
+	}
+
+	err = ConfigureToolPermissionPolicy(opts)
+	require.NoError(t, err)
+	require.NotNil(t, opts.CanUseTool)
+
+	denied, err := opts.CanUseTool(context.Background(), "Write", nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "deny", denied.GetBehavior())
+}
+
+func TestConfigureToolPermissionPolicy_PermissionsBypassesToolFilter(t *testing.T) {
+	t.Parallel()
+
+	var called bool
+
+	opts := &Options{
+		AllowedTools: []string{"Write"},
+		CanUseTool: func(
+			_ context.Context,
+			toolName string,
+			_ map[string]any,
+			_ *permission.Context,
+		) (permission.Result, error) {
+			called = true
+
+			require.Equal(t, "Permissions", toolName)
+
+			return &permission.ResultAllow{Behavior: "allow"}, nil
+		},
+	}
+
+	err := ConfigureToolPermissionPolicy(opts)
+	require.NoError(t, err)
+	require.NotNil(t, opts.CanUseTool)
+
+	result, err := opts.CanUseTool(context.Background(), "Permissions", nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "allow", result.GetBehavior())
+	require.True(t, called)
+}

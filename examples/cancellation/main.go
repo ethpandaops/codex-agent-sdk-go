@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -11,39 +10,15 @@ import (
 	codexsdk "github.com/ethpandaops/codex-agent-sdk-go"
 )
 
-// displayMessage standardizes message display function.
-func displayMessage(msg codexsdk.Message) {
-	switch m := msg.(type) {
-	case *codexsdk.AssistantMessage:
-		for _, block := range m.Content {
-			if textBlock, ok := block.(*codexsdk.TextBlock); ok {
-				fmt.Printf("Codex: %s\n", textBlock.Text)
-			}
-		}
-
-	case *codexsdk.ResultMessage:
-		fmt.Println("Result ended")
-	}
-}
-
 // exampleCancellation demonstrates cancelling a long-running callback.
 func exampleCancellation() {
 	fmt.Println("=== Cancellation Example ===")
-	fmt.Println("This example demonstrates cancellation with tool-permission callbacks.")
-	fmt.Println("The example triggers cancellation automatically after the callback starts.")
+	fmt.Println("This example demonstrates cancellation of a long-running permission callback.")
+	fmt.Println("The callback is driven directly so the cancellation behavior is deterministic.")
 	fmt.Println()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-
-	client := codexsdk.NewClient()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	defer func() {
-		if err := client.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to close client: %v\n", err)
-		}
-	}()
 
 	callbackStarted := make(chan struct{})
 
@@ -55,7 +30,7 @@ func exampleCancellation() {
 		_ map[string]any,
 		_ *codexsdk.ToolPermissionContext,
 	) (codexsdk.PermissionResult, error) {
-		if toolName != "Bash" {
+		if toolName != "Bash" && toolName != "Write" && toolName != "Edit" {
 			return &codexsdk.PermissionResultAllow{}, nil
 		}
 
@@ -80,39 +55,19 @@ func exampleCancellation() {
 		return &codexsdk.PermissionResultAllow{}, nil
 	}
 
-	if err := client.Start(ctx,
-		codexsdk.WithLogger(logger),
-		codexsdk.WithCanUseTool(longRunningCallback),
-		codexsdk.WithPermissionMode("default"),
-	); err != nil {
-		fmt.Printf("Failed to connect: %v\n", err)
-
-		return
-	}
-
-	fmt.Println("User: Create a file named cancellation_demo.txt with 'Hello World'")
+	fmt.Println("[MAIN] Starting simulated permission callback...")
 	fmt.Println()
 
 	queryDone := make(chan error, 1)
 
 	go func() {
-		queryDone <- client.Query(ctx, codexsdk.Text("Create a file named cancellation_demo.txt with 'Hello World'"))
-	}()
-
-	responseDone := make(chan struct{})
-
-	go func() {
-		defer close(responseDone)
-
-		for msg, err := range client.ReceiveResponse(ctx) {
-			if err != nil {
-				fmt.Printf("[MAIN] ReceiveResponse ended: %v\n", err)
-
-				return
-			}
-
-			displayMessage(msg)
-		}
+		_, err := longRunningCallback(
+			ctx,
+			"Bash",
+			map[string]any{"command": "printf 'Hello World' > cancellation_demo.txt"},
+			&codexsdk.ToolPermissionContext{},
+		)
+		queryDone <- err
 	}()
 
 	select {
@@ -129,13 +84,12 @@ func exampleCancellation() {
 	select {
 	case err := <-queryDone:
 		if err != nil {
-			fmt.Printf("[MAIN] Query ended with error (expected after cancel): %v\n", err)
+			fmt.Printf("[MAIN] Callback ended with error (expected after cancel): %v\n", err)
 		}
 	case <-time.After(15 * time.Second):
-		fmt.Println("[MAIN] Query did not finish in time after cancellation")
+		fmt.Println("[MAIN] Callback did not finish in time after cancellation")
 	}
 
-	<-responseDone
 	fmt.Println("[MAIN] Cancellation example completed")
 	fmt.Println()
 }
@@ -143,14 +97,11 @@ func exampleCancellation() {
 // exampleGracefulShutdown demonstrates graceful shutdown with in-flight callbacks.
 func exampleGracefulShutdown() {
 	fmt.Println("=== Graceful Shutdown Example ===")
-	fmt.Println("This example demonstrates graceful shutdown of in-flight callbacks.")
+	fmt.Println("This example demonstrates shutdown of an in-flight permission callback.")
+	fmt.Println("The callback is driven directly so the shutdown behavior is deterministic.")
 	fmt.Println()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-
-	client := codexsdk.NewClient()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	callbackStarted := make(chan struct{})
@@ -164,7 +115,7 @@ func exampleGracefulShutdown() {
 		_ map[string]any,
 		_ *codexsdk.ToolPermissionContext,
 	) (codexsdk.PermissionResult, error) {
-		if toolName != "Bash" {
+		if toolName != "Bash" && toolName != "Write" && toolName != "Edit" {
 			return &codexsdk.PermissionResultAllow{}, nil
 		}
 
@@ -178,27 +129,14 @@ func exampleGracefulShutdown() {
 		return nil, ctx.Err()
 	}
 
-	if err := client.Start(ctx,
-		codexsdk.WithLogger(logger),
-		codexsdk.WithCanUseTool(waitingCallback),
-		codexsdk.WithPermissionMode("default"),
-	); err != nil {
-		fmt.Printf("Failed to connect: %v\n", err)
-
-		return
-	}
-
-	receiveCtx, stopReceive := context.WithCancel(context.Background())
-	defer stopReceive()
-
 	go func() {
-		for range client.ReceiveMessages(receiveCtx) {
-		}
-	}()
-
-	go func() {
-		prompt := "Use Bash to run exactly this command and create the file: printf 'test' > graceful_shutdown_demo.txt"
-		if err := client.Query(ctx, codexsdk.Text(prompt)); err != nil {
+		_, err := waitingCallback(
+			ctx,
+			"Bash",
+			map[string]any{"command": "printf 'test' > graceful_shutdown_demo.txt"},
+			&codexsdk.ToolPermissionContext{},
+		)
+		if err != nil {
 			fmt.Printf("Query error (expected during shutdown): %v\n", err)
 		}
 	}()
@@ -214,13 +152,9 @@ func exampleGracefulShutdown() {
 
 	time.Sleep(500 * time.Millisecond)
 
-	fmt.Println("[MAIN] Calling client.Close() - this will cancel in-flight operations")
-
-	if err := client.Close(); err != nil {
-		fmt.Printf("[MAIN] Close completed with: %v\n", err)
-	} else {
-		fmt.Println("[MAIN] Close completed successfully")
-	}
+	fmt.Println("[MAIN] Simulating client shutdown by cancelling the callback context")
+	cancel()
+	fmt.Println("[MAIN] Shutdown signal sent")
 
 	select {
 	case <-callbackDone:

@@ -31,6 +31,10 @@ func displayMessage(msg codexsdk.Message) {
 			}
 		}
 	case *codexsdk.ResultMessage:
+		if m.Result != nil && *m.Result != "" {
+			fmt.Printf("Codex: %s\n", *m.Result)
+		}
+
 		fmt.Println("Result ended")
 
 		if m.Usage != nil {
@@ -39,7 +43,7 @@ func displayMessage(msg codexsdk.Message) {
 	}
 }
 
-func runEffortExample(title string, effort codexsdk.Effort, prompt string) {
+func runEffortExample(title string, effort codexsdk.Effort, prompt string, extraOpts ...codexsdk.Option) {
 	fmt.Printf("=== %s ===\n", title)
 	fmt.Println()
 
@@ -54,10 +58,12 @@ func runEffortExample(title string, effort codexsdk.Effort, prompt string) {
 		}
 	}()
 
-	if err := client.Start(ctx,
+	opts := append([]codexsdk.Option{
 		codexsdk.WithLogger(logger),
 		codexsdk.WithEffort(effort),
-	); err != nil {
+	}, extraOpts...)
+
+	if err := client.Start(ctx, opts...); err != nil {
 		fmt.Printf("Failed to connect: %v\n", err)
 
 		return
@@ -144,6 +150,26 @@ func main() {
 	fmt.Println()
 
 	examples := map[string]func(){
+		"none": func() {
+			runEffortExample(
+				"No Reasoning Example",
+				codexsdk.EffortNone,
+				"What is 2+2?",
+				// web_search is incompatible with effort "none"/"minimal".
+				codexsdk.WithConfig(map[string]string{"web_search": "disabled"}),
+			)
+		},
+		"minimal": func() {
+			// Note: "minimal" effort is only supported by certain models.
+			// If your default model does not support it, you may see an API error.
+			runEffortExample(
+				"Minimal Effort Example",
+				codexsdk.EffortMinimal,
+				"What is 7 times 8?",
+				// web_search is incompatible with effort "none"/"minimal".
+				codexsdk.WithConfig(map[string]string{"web_search": "disabled"}),
+			)
+		},
 		"low": func() {
 			runEffortExample(
 				"Low Effort Example",
@@ -166,6 +192,8 @@ func main() {
 		fmt.Println()
 		fmt.Println("Available examples:")
 		fmt.Println("  all       - Run all examples")
+		fmt.Println("  none      - No reasoning (fastest)")
+		fmt.Println("  minimal   - Minimal reasoning effort")
 		fmt.Println("  low       - Low reasoning effort")
 		fmt.Println("  high      - High reasoning effort")
 		fmt.Println("  streaming - Stream responses with high effort")
@@ -175,6 +203,9 @@ func main() {
 
 	example := os.Args[1]
 	if example == "all" {
+		examples["none"]()
+		fmt.Println(strings.Repeat("-", 60))
+		fmt.Println()
 		examples["low"]()
 		fmt.Println(strings.Repeat("-", 60))
 		fmt.Println()
@@ -193,6 +224,6 @@ func main() {
 	}
 
 	fmt.Printf("Error: Unknown example '%s'\n", example)
-	fmt.Println("Available examples: all, low, high, streaming")
+	fmt.Println("Available examples: all, none, minimal, low, high, streaming")
 	os.Exit(1)
 }

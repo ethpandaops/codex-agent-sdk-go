@@ -12,6 +12,28 @@ func normalizeToolName(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
 }
 
+func equivalentToolNames(name string) []string {
+	normalized := normalizeToolName(name)
+	switch normalized {
+	case "", "permissions":
+		return []string{normalized}
+	case "edit", "write":
+		return []string{"edit", "write"}
+	default:
+		return []string{normalized}
+	}
+}
+
+func matchesToolSet(set map[string]struct{}, toolName string) bool {
+	for _, candidate := range equivalentToolNames(toolName) {
+		if _, ok := set[candidate]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
 func toolSet(names []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(names))
 	for _, name := range names {
@@ -65,8 +87,16 @@ func ConfigureToolPermissionPolicy(opts *Options) error {
 			permCtx *permission.Context,
 		) (permission.Result, error) {
 			normalized := normalizeToolName(toolName)
+			if normalized == "permissions" {
+				if upstream != nil {
+					return upstream(ctx, toolName, input, permCtx)
+				}
+
+				return &permission.ResultAllow{Behavior: "allow"}, nil
+			}
+
 			if normalized != "" {
-				if _, denied := disallowedSet[normalized]; denied {
+				if matchesToolSet(disallowedSet, toolName) {
 					return &permission.ResultDeny{
 						Behavior: "deny",
 						Message:  fmt.Sprintf("tool %q is disallowed by SDK options", toolName),
@@ -74,7 +104,7 @@ func ConfigureToolPermissionPolicy(opts *Options) error {
 				}
 
 				if len(allowedSet) > 0 {
-					if _, allowed := allowedSet[normalized]; !allowed {
+					if !matchesToolSet(allowedSet, toolName) {
 						return &permission.ResultDeny{
 							Behavior: "deny",
 							Message:  fmt.Sprintf("tool %q is not in allowed tools", toolName),

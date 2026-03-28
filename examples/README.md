@@ -48,6 +48,9 @@ This is ideal for:
 | `mcp_calculator` | MCP server integration |
 | `plugin_example` | Plugin system usage |
 | `system_prompt` | Customizing system prompts |
+| `developer_instructions` | Using `WithDeveloperInstructions()` for additional agent guidance |
+| `personality` | Agent personality control with `WithPersonality()` |
+| `service_tier` | API service tier selection with `WithServiceTier()` |
 | `tools_option` | Configuring allowed tools |
 | `sdk_tools` | SDK-defined tools with `WithSDKTools` and `NewTool` |
 | `tool_permission_callback` | Custom tool permission handling |

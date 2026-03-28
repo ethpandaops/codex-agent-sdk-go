@@ -353,18 +353,35 @@ func buildInitializeRPC(
 		turnOverrides.collaborationMode = buildCollaborationMode(permissionModePlan, model)
 	}
 
-	if developerInstructions, ok := requestData["systemPrompt"].(string); ok && developerInstructions != "" {
-		params["developerInstructions"] = developerInstructions
+	// Explicit developerInstructions takes precedence over systemPrompt mapping.
+	if devInstr, ok := requestData["developerInstructions"].(string); ok && devInstr != "" {
+		params["developerInstructions"] = devInstr
+	}
+
+	// SystemPrompt maps to developerInstructions if no explicit one was set.
+	if _, hasDI := params["developerInstructions"]; !hasDI {
+		if systemPrompt, ok := requestData["systemPrompt"].(string); ok && systemPrompt != "" {
+			params["developerInstructions"] = systemPrompt
+		}
 	}
 
 	// Claude-style systemPromptPreset is emulated by forwarding its append text
-	// as developer instructions when no explicit system prompt is provided.
-	if _, hasSystemPrompt := params["developerInstructions"]; !hasSystemPrompt {
+	// as developer instructions when no explicit system prompt or developer
+	// instructions were provided.
+	if _, hasDI := params["developerInstructions"]; !hasDI {
 		if preset, ok := requestData["systemPromptPreset"].(map[string]any); ok {
 			if appendText, ok := preset["append"].(string); ok && appendText != "" {
 				params["developerInstructions"] = appendText
 			}
 		}
+	}
+
+	if personality, ok := requestData["personality"].(string); ok && personality != "" {
+		params["personality"] = personality
+	}
+
+	if serviceTier, ok := requestData["serviceTier"].(string); ok && serviceTier != "" {
+		params["serviceTier"] = serviceTier
 	}
 
 	// Pass through initialize fields that are part of the current SDK surface.
@@ -1569,30 +1586,22 @@ func (a *AppServerAdapter) translateNotification(
 		return a.translateItemNotification("item.started", params)
 
 	case "item/agentMessage/delta":
-		if !a.includePartialMessages {
-			return nil
-		}
+		return a.translateTextDeltaNotification(params)
 
-		delta, _ := params["delta"].(string)
-		itemID, _ := params["itemId"].(string)
+	case "item/reasoning/textDelta":
+		return a.translateTextDeltaNotification(params)
 
-		a.mu.Lock()
-		sessionID := a.threadID
-		a.mu.Unlock()
+	case "item/reasoning/summaryTextDelta":
+		return a.translateTextDeltaNotification(params)
 
-		return map[string]any{
-			"type":       "stream_event",
-			"uuid":       itemID,
-			"session_id": sessionID,
-			"event": map[string]any{
-				"type":  "content_block_delta",
-				"index": 0,
-				"delta": map[string]any{
-					"type": "text_delta",
-					"text": delta,
-				},
-			},
-		}
+	case "item/commandExecution/outputDelta":
+		return a.translateTextDeltaNotification(params)
+
+	case "item/fileChange/outputDelta":
+		return a.translateTextDeltaNotification(params)
+
+	case "item/plan/delta":
+		return a.translateTextDeltaNotification(params)
 
 	case "item/completed":
 		return a.translateItemNotification("item.completed", params)
@@ -1629,6 +1638,9 @@ func (a *AppServerAdapter) translateNotification(
 			"data":    params,
 		}
 
+	case "error":
+		return a.translateErrorNotification(params)
+
 	default:
 		// Handle codex/event/* namespace.
 		if strings.HasPrefix(notif.Method, "codex/event/") {
@@ -1645,6 +1657,30 @@ func (a *AppServerAdapter) translateNotification(
 			"subtype": notif.Method,
 			"data":    params,
 		}
+	}
+}
+
+// translateErrorNotification converts an "error" notification into the
+// exec-event "error" format that message.Parse handles as an AssistantMessage
+// with an error type.
+func (a *AppServerAdapter) translateErrorNotification(params map[string]any) map[string]any {
+	var msg string
+
+	if errObj, ok := params["error"].(map[string]any); ok {
+		msg, _ = errObj["message"].(string)
+	}
+
+	if msg == "" {
+		msg, _ = params["message"].(string)
+	}
+
+	if msg == "" {
+		msg = "unknown error"
+	}
+
+	return map[string]any{
+		"type":    "error",
+		"message": msg,
 	}
 }
 
@@ -1709,29 +1745,59 @@ func (a *AppServerAdapter) translateItemNotification(
 func (a *AppServerAdapter) translateUserMessageItem(
 	nested map[string]any,
 ) map[string]any {
-	var text string
-
 	if contentArr, ok := nested["content"].([]any); ok {
+		textOnly := true
 		parts := make([]string, 0, len(contentArr))
 
 		for _, block := range contentArr {
-			if blockMap, ok := block.(map[string]any); ok {
-				if blockMap["type"] == "text" {
-					if t, ok := blockMap["text"].(string); ok {
-						parts = append(parts, t)
-					}
-				}
+			blockMap, ok := block.(map[string]any)
+			if !ok {
+				textOnly = false
+
+				break
 			}
+
+			if blockMap["type"] != "text" {
+				textOnly = false
+
+				break
+			}
+
+			text, ok := blockMap["text"].(string)
+			if !ok {
+				textOnly = false
+
+				break
+			}
+
+			parts = append(parts, text)
 		}
 
-		text = strings.Join(parts, "\n")
+		content := cloneAnyValue(contentArr)
+		if textOnly {
+			content = strings.Join(parts, "\n")
+		}
+
+		event := map[string]any{
+			"type": "user",
+			"message": map[string]any{
+				"role":    "user",
+				"content": content,
+			},
+		}
+
+		if id, ok := nested["id"].(string); ok {
+			event["uuid"] = id
+		}
+
+		return event
 	}
 
 	event := map[string]any{
 		"type": "user",
 		"message": map[string]any{
 			"role":    "user",
-			"content": text,
+			"content": "",
 		},
 	}
 
@@ -1740,6 +1806,39 @@ func (a *AppServerAdapter) translateUserMessageItem(
 	}
 
 	return event
+}
+
+func (a *AppServerAdapter) translateTextDeltaNotification(
+	params map[string]any,
+) map[string]any {
+	if !a.includePartialMessages {
+		return nil
+	}
+
+	delta, _ := params["delta"].(string)
+	itemID, _ := params["itemId"].(string)
+
+	a.mu.Lock()
+	sessionID := a.threadID
+	a.mu.Unlock()
+
+	if threadID, ok := params["threadId"].(string); ok && threadID != "" {
+		sessionID = threadID
+	}
+
+	return map[string]any{
+		"type":       "stream_event",
+		"uuid":       itemID,
+		"session_id": sessionID,
+		"event": map[string]any{
+			"type":  "content_block_delta",
+			"index": 0,
+			"delta": map[string]any{
+				"type": "text_delta",
+				"text": delta,
+			},
+		},
+	}
 }
 
 // translateTurnCompleted builds a turn.completed event, injecting cached
@@ -2251,7 +2350,8 @@ func (a *AppServerAdapter) extractAndTranslateItem(params map[string]any) map[st
 	}
 
 	// Reasoning items carry text in a "summary" string array, not "text".
-	if item["type"] == "reasoning" {
+	switch item["type"] {
+	case "reasoning":
 		if summaryArr, ok := item["summary"].([]any); ok && len(summaryArr) > 0 {
 			parts := make([]string, 0, len(summaryArr))
 
@@ -2265,6 +2365,22 @@ func (a *AppServerAdapter) extractAndTranslateItem(params map[string]any) map[st
 				item["text"] = strings.Join(parts, "\n")
 			}
 		}
+	case "image_view":
+		if path, ok := item["path"].(string); ok && path != "" {
+			item["text"] = fmt.Sprintf("Viewed image: %s", path)
+		}
+	case "entered_review_mode":
+		if review, ok := item["review"].(string); ok && review != "" {
+			item["text"] = fmt.Sprintf("Entered review mode: %s", review)
+		}
+	case "exited_review_mode":
+		if review, ok := item["review"].(string); ok && review != "" {
+			item["text"] = fmt.Sprintf("Exited review mode: %s", review)
+		}
+	case "context_compaction":
+		item["text"] = "Context compacted."
+	case "collab_agent_tool_call":
+		item["text"] = summarizeCollabAgentToolCall(item)
 	}
 
 	return item
@@ -2324,16 +2440,25 @@ func extractThreadID(result map[string]any) string {
 // camelToSnake converts a camelCase string to snake_case.
 // Specifically handles the known item types from the app-server protocol.
 var camelToSnakeMap = map[string]string{
-	"agentMessage":     "agent_message",
-	"commandExecution": "command_execution",
-	"dynamicToolCall":  "dynamic_tool_call",
-	"fileChange":       "file_change",
-	"mcpToolCall":      "mcp_tool_call",
-	"userMessage":      "user_message",
-	"webSearch":        "web_search",
-	"todoList":         "todo_list",
-	"reasoning":        "reasoning",
-	"error":            "error",
+	"agentMessage":        "agent_message",
+	"collabAgentToolCall": "collab_agent_tool_call",
+	"commandExecution":    "command_execution",
+	"contextCompaction":   "context_compaction",
+	"dynamicToolCall":     "dynamic_tool_call",
+	"enteredReviewMode":   "entered_review_mode",
+	"exitedReviewMode":    "exited_review_mode",
+	"fileChange":          "file_change",
+	"imageView":           "image_view",
+	"mcpToolCall":         "mcp_tool_call",
+	"plan":                "plan",
+	"userMessage":         "user_message",
+	"webSearch":           "web_search",
+	"todoList":            "todo_list",
+	"reasoning":           "reasoning",
+	"error":               "error",
+	"toolSearchCall":      "tool_search_call",
+	"imageGenerationCall": "image_generation_call",
+	"customToolCall":      "custom_tool_call",
 }
 
 func camelToSnake(s string) string {
@@ -2353,4 +2478,27 @@ func methodToSubtype(method string) string {
 	}
 
 	return method
+}
+
+func summarizeCollabAgentToolCall(item map[string]any) string {
+	tool, _ := item["tool"].(string)
+	status, _ := item["status"].(string)
+	prompt, _ := item["prompt"].(string)
+
+	parts := make([]string, 0, 3)
+	if tool != "" {
+		parts = append(parts, "Collab tool "+tool)
+	} else {
+		parts = append(parts, "Collab tool call")
+	}
+
+	if status != "" {
+		parts = append(parts, "status "+status)
+	}
+
+	if prompt != "" {
+		parts = append(parts, prompt)
+	}
+
+	return strings.Join(parts, ": ")
 }

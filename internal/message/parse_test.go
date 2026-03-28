@@ -412,6 +412,85 @@ func TestParseCodexFileChangeKindObject(t *testing.T) {
 	require.Equal(t, "hello.txt", toolUse.Input["file_path"])
 }
 
+func TestParseCodexFileChangeKindString(t *testing.T) {
+	logger := slog.Default()
+
+	data := map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":   "item-1",
+			"type": "file_change",
+			"changes": []any{
+				map[string]any{
+					"path": "hello.txt",
+					"kind": "add",
+				},
+			},
+		},
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err, "current codex exec emits string file_change kinds like add")
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok, "expected *AssistantMessage")
+	require.Len(t, assistant.Content, 1)
+
+	toolUse, ok := assistant.Content[0].(*ToolUseBlock)
+	require.True(t, ok, "expected first content block to be ToolUseBlock")
+	require.Equal(t, "Write", toolUse.Name, "string kind add should still surface as a file create")
+	require.Equal(t, "hello.txt", toolUse.Input["file_path"])
+}
+
+func TestParseCodexMCPToolCall_CompletedPreservesResult(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":     "mcp_123",
+			"type":   "mcp_tool_call",
+			"server": "calc",
+			"tool":   "add",
+			"arguments": map[string]any{
+				"a": 15.0,
+				"b": 27.0,
+			},
+			"status": "completed",
+			"result": map[string]any{
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "42",
+					},
+				},
+			},
+			"contentItems": []any{
+				map[string]any{
+					"type": "text",
+					"text": "42",
+				},
+			},
+			"success": true,
+		},
+	})
+	require.NoError(t, err)
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok, "expected *AssistantMessage")
+	require.Len(t, assistant.Content, 2, "completed MCP tool calls should preserve a result block")
+
+	toolUse, ok := assistant.Content[0].(*ToolUseBlock)
+	require.True(t, ok, "expected first content block to be ToolUseBlock")
+	require.Equal(t, "calc:add", toolUse.Name)
+	require.Equal(t, 15.0, toolUse.Input["a"])
+	require.Equal(t, 27.0, toolUse.Input["b"])
+
+	toolResult, ok := assistant.Content[1].(*ToolResultBlock)
+	require.True(t, ok, "expected second content block to be ToolResultBlock")
+	require.NotEmpty(t, toolResult.Content, "completed MCP tool call result payload should not be dropped")
+}
+
 func TestParseTypedSystemMessages(t *testing.T) {
 	logger := slog.Default()
 
@@ -478,4 +557,267 @@ func TestParseTypedSystemMessages(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), `"data"`)
 	})
+}
+
+func TestParseCodexTodoList(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":   "todo_1",
+			"type": "todo_list",
+			"items": []any{
+				map[string]any{"text": "Write tests", "completed": true},
+				map[string]any{"text": "Deploy", "completed": false},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok, "expected *AssistantMessage")
+	require.Len(t, assistant.Content, 1)
+
+	textBlock, ok := assistant.Content[0].(*TextBlock)
+	require.True(t, ok, "expected TextBlock")
+	require.Contains(t, textBlock.Text, "[x] Write tests")
+	require.Contains(t, textBlock.Text, "[ ] Deploy")
+}
+
+func TestParseCodexToolSearch(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":   "ts_1",
+			"type": "tool_search_call",
+			"name": "SearchTools",
+			"arguments": map[string]any{
+				"query": "file search",
+			},
+			"success": true,
+			"contentItems": []any{
+				map[string]any{"type": "inputText", "text": "found 3 tools"},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok, "expected *AssistantMessage")
+	require.Len(t, assistant.Content, 2)
+
+	toolUse, ok := assistant.Content[0].(*ToolUseBlock)
+	require.True(t, ok, "expected ToolUseBlock")
+	require.Equal(t, "SearchTools", toolUse.Name)
+	require.Equal(t, "ts_1", toolUse.ID)
+	require.Equal(t, "file search", toolUse.Input["query"])
+
+	toolResult, ok := assistant.Content[1].(*ToolResultBlock)
+	require.True(t, ok, "expected ToolResultBlock")
+	require.Equal(t, "ts_1", toolResult.ToolUseID)
+	require.False(t, toolResult.IsError)
+}
+
+func TestParseCodexToolSearch_DefaultName(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":   "ts_2",
+			"type": "tool_search_call",
+		},
+	})
+	require.NoError(t, err)
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok)
+
+	toolUse, ok := assistant.Content[0].(*ToolUseBlock)
+	require.True(t, ok)
+	require.Equal(t, "ToolSearch", toolUse.Name)
+}
+
+func TestParseCodexImageGeneration(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":      "ig_1",
+			"type":    "image_generation_call",
+			"name":    "GenerateImage",
+			"success": true,
+			"contentItems": []any{
+				map[string]any{"type": "inputImage", "imageUrl": "data:image/png;base64,abc"},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok)
+	require.Len(t, assistant.Content, 2)
+
+	toolUse, ok := assistant.Content[0].(*ToolUseBlock)
+	require.True(t, ok)
+	require.Equal(t, "GenerateImage", toolUse.Name)
+
+	toolResult, ok := assistant.Content[1].(*ToolResultBlock)
+	require.True(t, ok)
+	require.Equal(t, "ig_1", toolResult.ToolUseID)
+	require.False(t, toolResult.IsError)
+}
+
+func TestParseCodexCustomToolCall(t *testing.T) {
+	logger := slog.Default()
+
+	succTrue := true
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"id":   "ct_1",
+			"type": "custom_tool_call",
+			"name": "my_tool",
+			"arguments": map[string]any{
+				"input": "test",
+			},
+			"success": succTrue,
+			"contentItems": []any{
+				map[string]any{"type": "inputText", "text": "result"},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok)
+	require.Len(t, assistant.Content, 2)
+
+	toolUse, ok := assistant.Content[0].(*ToolUseBlock)
+	require.True(t, ok)
+	require.Equal(t, "my_tool", toolUse.Name)
+
+	toolResult, ok := assistant.Content[1].(*ToolResultBlock)
+	require.True(t, ok)
+	require.Equal(t, "ct_1", toolResult.ToolUseID)
+	require.False(t, toolResult.IsError)
+	require.Len(t, toolResult.Content, 1)
+}
+
+func TestParseContentBlock_Image(t *testing.T) {
+	block, err := parseContentBlock(map[string]any{
+		"type": "image",
+		"url":  "https://example.com/img.png",
+	})
+	require.NoError(t, err)
+
+	imgBlock, ok := block.(*InputImageBlock)
+	require.True(t, ok)
+	require.Equal(t, "https://example.com/img.png", imgBlock.URL)
+}
+
+func TestParseContentBlock_ImageWithImageURL(t *testing.T) {
+	block, err := parseContentBlock(map[string]any{
+		"type":      "image",
+		"image_url": "data:image/png;base64,abc",
+	})
+	require.NoError(t, err)
+
+	imgBlock, ok := block.(*InputImageBlock)
+	require.True(t, ok)
+	require.Equal(t, "data:image/png;base64,abc", imgBlock.URL)
+}
+
+func TestParseContentBlock_LocalImage(t *testing.T) {
+	block, err := parseContentBlock(map[string]any{
+		"type": "local_image",
+		"path": "/tmp/screenshot.png",
+	})
+	require.NoError(t, err)
+
+	localBlock, ok := block.(*InputLocalImageBlock)
+	require.True(t, ok)
+	require.Equal(t, BlockTypeLocalImage, localBlock.Type)
+	require.Equal(t, "/tmp/screenshot.png", localBlock.Path)
+}
+
+func TestParseContentBlock_LocalImageCamelCase(t *testing.T) {
+	block, err := parseContentBlock(map[string]any{
+		"type": "localImage",
+		"path": "/tmp/img.jpg",
+	})
+	require.NoError(t, err)
+
+	localBlock, ok := block.(*InputLocalImageBlock)
+	require.True(t, ok)
+	require.Equal(t, "/tmp/img.jpg", localBlock.Path)
+}
+
+func TestParseContentBlock_Mention(t *testing.T) {
+	block, err := parseContentBlock(map[string]any{
+		"type": "mention",
+		"name": "src/main.go",
+		"path": "/home/user/project/src/main.go",
+	})
+	require.NoError(t, err)
+
+	mentionBlock, ok := block.(*InputMentionBlock)
+	require.True(t, ok)
+	require.Equal(t, "src/main.go", mentionBlock.Name)
+	require.Equal(t, "/home/user/project/src/main.go", mentionBlock.Path)
+}
+
+func TestContentItemsToBlocks_InputImage(t *testing.T) {
+	items := []ContentItem{
+		{Type: "inputText", Text: "hello"},
+		{
+			Type: "inputImage",
+			Raw:  map[string]any{"type": "inputImage", "imageUrl": "https://example.com/img.png"},
+		},
+		{
+			Type: "inputImage",
+			Raw:  map[string]any{"type": "inputImage", "image_url": "data:image/png;base64,abc"},
+		},
+	}
+
+	blocks := contentItemsToBlocks(items)
+	require.Len(t, blocks, 3)
+
+	textBlock, ok := blocks[0].(*TextBlock)
+	require.True(t, ok)
+	require.Equal(t, "hello", textBlock.Text)
+
+	imgBlock1, ok := blocks[1].(*InputImageBlock)
+	require.True(t, ok)
+	require.Equal(t, "https://example.com/img.png", imgBlock1.URL)
+
+	imgBlock2, ok := blocks[2].(*InputImageBlock)
+	require.True(t, ok)
+	require.Equal(t, "data:image/png;base64,abc", imgBlock2.URL)
+}
+
+func TestCodexUsage_ReasoningOutputTokens(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type":       "turn.completed",
+		"session_id": "sess_1",
+		"usage": map[string]any{
+			"input_tokens":            float64(100),
+			"cached_input_tokens":     float64(50),
+			"output_tokens":           float64(200),
+			"reasoning_output_tokens": float64(75),
+		},
+	})
+	require.NoError(t, err)
+
+	result, ok := msg.(*ResultMessage)
+	require.True(t, ok)
+	require.NotNil(t, result.Usage)
+	require.Equal(t, 75, result.Usage.ReasoningOutputTokens)
 }

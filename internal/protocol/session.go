@@ -58,7 +58,16 @@ func (s *Session) RegisterHandlers() {
 	s.controller.RegisterHandler("can_use_tool", s.HandleCanUseTool)
 	s.controller.RegisterHandler("item_commandExecution/requestApproval", s.HandleCanUseTool)
 	s.controller.RegisterHandler("item_commandExecution_requestApproval", s.HandleCanUseTool)
+	s.controller.RegisterHandler("execCommandApproval", s.HandleCanUseTool)
 	s.controller.RegisterHandler("item_tool/requestUserInput", s.HandleRequestUserInput)
+
+	// File change approval (app-server sends item/fileChange/requestApproval).
+	s.controller.RegisterHandler("item_fileChange/requestApproval", s.HandleFileChangeApproval)
+	s.controller.RegisterHandler("item_fileChange_requestApproval", s.HandleFileChangeApproval)
+	s.controller.RegisterHandler("applyPatchApproval", s.HandleFileChangeApproval)
+
+	// External auth token refresh (used by current app-server external-auth mode).
+	s.controller.RegisterHandler("account_chatgptAuthTokens/refresh", s.HandleChatGPTAuthTokensRefresh)
 }
 
 // RegisterMCPServers extracts and registers SDK MCP servers from options.
@@ -159,6 +168,18 @@ func (s *Session) buildInitializePayload() map[string]any {
 
 	if s.options.Effort != nil {
 		payload["reasoningEffort"] = string(*s.options.Effort)
+	}
+
+	if s.options.Personality != "" {
+		payload["personality"] = s.options.Personality
+	}
+
+	if s.options.ServiceTier != "" {
+		payload["serviceTier"] = s.options.ServiceTier
+	}
+
+	if s.options.DeveloperInstructions != "" {
+		payload["developerInstructions"] = s.options.DeveloperInstructions
 	}
 
 	sandboxMode := s.options.Sandbox
@@ -560,11 +581,7 @@ func convertMCPContentToItems(result map[string]any) []map[string]any {
 			items := make([]map[string]any, 0, len(contentAny))
 			for _, entry := range contentAny {
 				if entryMap, ok := entry.(map[string]any); ok {
-					text, _ := entryMap["text"].(string)
-					items = append(items, map[string]any{
-						"type": "inputText",
-						"text": text,
-					})
+					items = append(items, convertMCPContentEntry(entryMap))
 				}
 			}
 
@@ -576,14 +593,35 @@ func convertMCPContentToItems(result map[string]any) []map[string]any {
 
 	items := make([]map[string]any, 0, len(content))
 	for _, entry := range content {
-		text, _ := entry["text"].(string)
-		items = append(items, map[string]any{
-			"type": "inputText",
-			"text": text,
-		})
+		items = append(items, convertMCPContentEntry(entry))
 	}
 
 	return items
+}
+
+// convertMCPContentEntry converts a single MCP content entry to a
+// DynamicToolCallResponse content item, handling both text and image types.
+func convertMCPContentEntry(entry map[string]any) map[string]any {
+	entryType, _ := entry["type"].(string)
+
+	if entryType == "image" {
+		imageURL, _ := entry["image_url"].(string)
+		if imageURL == "" {
+			imageURL, _ = entry["url"].(string)
+		}
+
+		return map[string]any{
+			"type":     "inputImage",
+			"imageUrl": imageURL,
+		}
+	}
+
+	text, _ := entry["text"].(string)
+
+	return map[string]any{
+		"type": "inputText",
+		"text": text,
+	}
 }
 
 // HandleRequestUserInput handles item/tool/requestUserInput requests from the CLI.
@@ -715,6 +753,17 @@ func (s *Session) HandleCanUseTool(
 					input["cwd"] = cwd
 				}
 			}
+		} else if command, ok := commandArrayToString(req.Request["command"]); ok && command != "" {
+			toolName = "Bash"
+
+			if input == nil {
+				input = map[string]any{
+					"command": command,
+				}
+				if cwd, ok := req.Request["cwd"].(string); ok && cwd != "" {
+					input["cwd"] = cwd
+				}
+			}
 		}
 	}
 
@@ -788,4 +837,208 @@ func (s *Session) normalizePermissionToolName(toolName string) string {
 	}
 
 	return "mcp__" + rest
+}
+
+// HandleFileChangeApproval handles item/fileChange/requestApproval requests.
+// It routes through the CanUseTool callback if set, otherwise auto-accepts.
+func (s *Session) HandleFileChangeApproval(
+	ctx context.Context,
+	req *ControlRequest,
+) (map[string]any, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	if s.options == nil || s.options.CanUseTool == nil {
+		return map[string]any{"decision": "accept"}, nil
+	}
+
+	toolName := inferFileApprovalToolName(req.Request)
+
+	input := make(map[string]any, 4)
+	if itemID, ok := req.Request["itemId"].(string); ok {
+		input["itemId"] = itemID
+	}
+
+	if grantRoot, ok := req.Request["grantRoot"].(string); ok {
+		input["grantRoot"] = grantRoot
+	}
+
+	if reason, ok := req.Request["reason"].(string); ok {
+		input["reason"] = reason
+	}
+
+	if fileChanges, ok := req.Request["fileChanges"].(map[string]any); ok && len(fileChanges) > 0 {
+		input["fileChanges"] = fileChanges
+	}
+
+	decision, err := s.options.CanUseTool(ctx, toolName, input, &permission.Context{})
+	if err != nil {
+		return nil, err
+	}
+
+	switch decision.(type) {
+	case *permission.ResultAllow:
+		return map[string]any{"decision": "accept"}, nil
+	case *permission.ResultDeny:
+		return map[string]any{"decision": "decline"}, nil
+	default:
+		return nil, fmt.Errorf(
+			"tool permission callback must return *ResultAllow or *ResultDeny, got %T",
+			decision,
+		)
+	}
+}
+
+// HandlePermissionsApproval handles item/permissions/requestApproval requests.
+// It routes through the CanUseTool callback if set, otherwise auto-accepts.
+func (s *Session) HandlePermissionsApproval(
+	ctx context.Context,
+	req *ControlRequest,
+) (map[string]any, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	if s.options == nil || s.options.CanUseTool == nil {
+		return map[string]any{"decision": "accept"}, nil
+	}
+
+	input := make(map[string]any, 2)
+	if permissions, ok := req.Request["permissions"].(map[string]any); ok {
+		input["permissions"] = permissions
+	}
+
+	if reason, ok := req.Request["reason"].(string); ok {
+		input["reason"] = reason
+	}
+
+	decision, err := s.options.CanUseTool(ctx, "Permissions", input, &permission.Context{})
+	if err != nil {
+		return nil, err
+	}
+
+	switch decision.(type) {
+	case *permission.ResultAllow:
+		return map[string]any{"decision": "accept"}, nil
+	case *permission.ResultDeny:
+		return map[string]any{"decision": "decline"}, nil
+	default:
+		return nil, fmt.Errorf(
+			"tool permission callback must return *ResultAllow or *ResultDeny, got %T",
+			decision,
+		)
+	}
+}
+
+// HandleMCPElicitation handles mcpServer/elicitation/request requests.
+// No SDK callback exists for this yet; auto-accepts.
+func (s *Session) HandleMCPElicitation(
+	_ context.Context,
+	_ *ControlRequest,
+) (map[string]any, error) {
+	return map[string]any{"action": "accept", "content": nil}, nil
+}
+
+// HandleChatGPTAuthTokensRefresh handles account/chatgptAuthTokens/refresh
+// requests used by app-server external-auth mode.
+func (s *Session) HandleChatGPTAuthTokensRefresh(
+	ctx context.Context,
+	_ *ControlRequest,
+) (map[string]any, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	accessToken := firstNonEmptyEnv(
+		"CODEX_CHATGPT_ACCESS_TOKEN",
+		"CHATGPT_ACCESS_TOKEN",
+	)
+	accountID := firstNonEmptyEnv(
+		"CODEX_CHATGPT_ACCOUNT_ID",
+		"CHATGPT_ACCOUNT_ID",
+	)
+
+	if accessToken == "" || accountID == "" {
+		return nil, fmt.Errorf(
+			"chatgpt auth token refresh requested but no external auth tokens are configured; use Codex managed auth or set CODEX_CHATGPT_ACCESS_TOKEN and CODEX_CHATGPT_ACCOUNT_ID",
+		)
+	}
+
+	resp := map[string]any{
+		"accessToken":      accessToken,
+		"chatgptAccountId": accountID,
+	}
+
+	if planType := firstNonEmptyEnv("CODEX_CHATGPT_PLAN_TYPE", "CHATGPT_PLAN_TYPE"); planType != "" {
+		resp["chatgptPlanType"] = planType
+	}
+
+	return resp, nil
+}
+
+func commandArrayToString(value any) (string, bool) {
+	switch v := value.(type) {
+	case []string:
+		if len(v) == 0 {
+			return "", false
+		}
+
+		return strings.Join(v, " "), true
+	case []any:
+		if len(v) == 0 {
+			return "", false
+		}
+
+		parts := make([]string, 0, len(v))
+		for _, part := range v {
+			s, ok := part.(string)
+			if !ok {
+				return "", false
+			}
+
+			parts = append(parts, s)
+		}
+
+		return strings.Join(parts, " "), true
+	default:
+		return "", false
+	}
+}
+
+func inferFileApprovalToolName(request map[string]any) string {
+	fileChanges, ok := request["fileChanges"].(map[string]any)
+	if !ok {
+		return "Edit"
+	}
+
+	for _, raw := range fileChanges {
+		change, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		changeType, _ := change["type"].(string)
+		if changeType == "add" || changeType == "create" {
+			return "Write"
+		}
+	}
+
+	return "Edit"
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
+	}
+
+	return ""
 }

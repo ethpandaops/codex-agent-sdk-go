@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"maps"
-	"os"
 	"strings"
-	"time"
 
 	codexsdk "github.com/ethpandaops/codex-agent-sdk-go"
 )
@@ -21,35 +18,6 @@ type ToolUsageLog struct {
 }
 
 var toolUsageLog []ToolUsageLog
-
-// displayMessage standardizes message display across examples.
-func displayMessage(msg codexsdk.Message) {
-	switch m := msg.(type) {
-	case *codexsdk.UserMessage:
-		for _, block := range m.Content.Blocks() {
-			if textBlock, ok := block.(*codexsdk.TextBlock); ok {
-				fmt.Printf("User: %s\n", textBlock.Text)
-			}
-		}
-
-	case *codexsdk.AssistantMessage:
-		for _, block := range m.Content {
-			if textBlock, ok := block.(*codexsdk.TextBlock); ok {
-				fmt.Printf("Codex: %s\n", textBlock.Text)
-			}
-		}
-
-	case *codexsdk.SystemMessage:
-		// Ignore system messages in display
-
-	case *codexsdk.ResultMessage:
-		fmt.Println("Task completed!")
-
-		if m.Usage != nil {
-			fmt.Printf("   Tokens: %d in / %d out\n", m.Usage.InputTokens, m.Usage.OutputTokens)
-		}
-	}
-}
 
 // myPermissionCallback controls tool permissions based on tool type and input.
 func myPermissionCallback(
@@ -155,76 +123,63 @@ func myPermissionCallback(
 	}, nil
 }
 
+func simulatePermissionRequest(
+	ctx context.Context,
+	toolName string,
+	input map[string]any,
+) {
+	result, err := myPermissionCallback(ctx, toolName, input, &codexsdk.ToolPermissionContext{})
+	if err != nil {
+		fmt.Printf("   Callback error: %v\n", err)
+
+		return
+	}
+
+	switch r := result.(type) {
+	case *codexsdk.PermissionResultAllow:
+		fmt.Printf("   Result: allow")
+
+		if len(r.UpdatedInput) > 0 {
+			updatedJSON, _ := json.MarshalIndent(r.UpdatedInput, "   ", "  ")
+			fmt.Printf(" with updated input %s", string(updatedJSON))
+		}
+
+		fmt.Println()
+	case *codexsdk.PermissionResultDeny:
+		fmt.Printf("   Result: deny")
+
+		if r.Message != "" {
+			fmt.Printf(" (%s)", r.Message)
+		}
+
+		fmt.Println()
+	default:
+		fmt.Printf("   Result: unexpected type %T\n", result)
+	}
+}
+
 func main() {
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println("Tool Permission Callback Example")
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println("\nThis example demonstrates how to:")
-	fmt.Println("1. Allow/deny tools based on type")
-	fmt.Println("2. Modify tool inputs for safety")
-	fmt.Println("3. Log tool usage")
-	fmt.Println("4. Prompt for unknown tools")
+	fmt.Println("1. Implement a custom permission callback")
+	fmt.Println("2. Allow/deny approval-gated tools based on type")
+	fmt.Println("3. Modify tool inputs for safety")
+	fmt.Println("4. Log tool usage for later inspection")
+	fmt.Println("5. Drive the callback directly so the demo is deterministic")
 	fmt.Println(strings.Repeat("=", 60))
 
-	// Configure logging
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx := context.Background()
 
-	// Create client
-	client := codexsdk.NewClient()
+	fmt.Println("\n🧪 Simulating permission requests...")
+	simulatePermissionRequest(ctx, "Read", map[string]any{"file_path": "./README.md"})
+	simulatePermissionRequest(ctx, "Write", map[string]any{"file_path": "/etc/hosts"})
+	simulatePermissionRequest(ctx, "Write", map[string]any{"file_path": "notes.txt"})
+	simulatePermissionRequest(ctx, "Bash", map[string]any{"command": "ls -1"})
+	simulatePermissionRequest(ctx, "Bash", map[string]any{"command": "sudo rm -rf /"})
+	simulatePermissionRequest(ctx, "Browser", map[string]any{"url": "https://example.com"})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-	defer func() {
-		if err := client.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to close client: %v\n", err)
-		}
-	}()
-
-	// Configure options with our callback
-	if err := client.Start(ctx,
-		codexsdk.WithLogger(logger),
-		codexsdk.WithCanUseTool(myPermissionCallback),
-		// Use default permission mode to ensure callbacks are invoked
-		codexsdk.WithPermissionMode("default"),
-		codexsdk.WithCwd("."),
-	); err != nil {
-		fmt.Printf("Failed to connect: %v\n", err)
-
-		return
-	}
-
-	fmt.Println("\n📝 Sending query to Codex...")
-
-	queryText := `Please do the following:
-1. List the files in the current directory
-2. Create a simple golang hello world script at /tmp/hello.go
-3. Run the script to test it`
-
-	if err := client.Query(ctx, codexsdk.Text(queryText)); err != nil {
-		fmt.Printf("Failed to send query: %v\n", err)
-
-		return
-	}
-
-	fmt.Println("\n📨 Receiving response...")
-
-	messageCount := 0
-
-	for msg, err := range client.ReceiveMessages(ctx) {
-		if err != nil {
-			break
-		}
-
-		messageCount++
-
-		displayMessage(msg)
-
-		if _, ok := msg.(*codexsdk.ResultMessage); ok {
-			fmt.Printf("   Messages processed: %d\n", messageCount)
-
-			break
-		}
-	}
 	// Print tool usage summary
 	fmt.Println("\n" + strings.Repeat("=", 60))
 

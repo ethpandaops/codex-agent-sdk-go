@@ -109,6 +109,33 @@ func WithEffort(effort config.Effort) Option {
 	}
 }
 
+// ===== Personality / Service Tier =====
+
+// WithPersonality sets the agent's response personality.
+// Valid values: "none", "friendly", "pragmatic".
+func WithPersonality(personality string) Option {
+	return func(o *CodexAgentOptions) {
+		o.Personality = personality
+	}
+}
+
+// WithServiceTier sets the service tier for API requests.
+// Valid values: "fast", "flex".
+func WithServiceTier(tier string) Option {
+	return func(o *CodexAgentOptions) {
+		o.ServiceTier = tier
+	}
+}
+
+// WithDeveloperInstructions provides additional instructions for the agent.
+// This is separate from WithSystemPrompt and maps to the developerInstructions
+// field in the Codex CLI protocol.
+func WithDeveloperInstructions(instructions string) Option {
+	return func(o *CodexAgentOptions) {
+		o.DeveloperInstructions = instructions
+	}
+}
+
 // ===== MCP =====
 
 // WithMCPServers configures external MCP servers to connect to.

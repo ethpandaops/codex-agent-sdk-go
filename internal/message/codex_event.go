@@ -73,14 +73,21 @@ const (
 	ItemTypeTodoList ItemType = "todo_list"
 	// ItemTypeError is an error item.
 	ItemTypeError ItemType = "error"
+	// ItemTypeToolSearch is a tool search operation.
+	ItemTypeToolSearch ItemType = "tool_search_call"
+	// ItemTypeImageGeneration is an image generation operation.
+	ItemTypeImageGeneration ItemType = "image_generation_call"
+	// ItemTypeCustomToolCall is a custom tool call.
+	ItemTypeCustomToolCall ItemType = "custom_tool_call"
 )
 
 // CodexItem represents an item in a Codex event.
 //
 //nolint:tagliatelle // JSON tags match Codex CLI wire format.
 type CodexItem struct {
-	ID   string   `json:"id"`
-	Type ItemType `json:"type"`
+	ID   string         `json:"id"`
+	Type ItemType       `json:"type"`
+	Raw  map[string]any `json:"-"`
 
 	// agent_message / reasoning
 	Text string `json:"text,omitempty"`
@@ -97,12 +104,21 @@ type CodexItem struct {
 	// mcp_tool_call
 	Server string `json:"server,omitempty"`
 	Tool   string `json:"tool,omitempty"`
+	Result any    `json:"result,omitempty"`
+	Error  any    `json:"error,omitempty"`
 
 	// dynamic_tool_call
 	Name         string         `json:"name,omitempty"`
 	Arguments    map[string]any `json:"arguments,omitempty"`
 	ContentItems []ContentItem  `json:"contentItems,omitempty"`
 	Success      *bool          `json:"success,omitempty"`
+
+	// plan / image_view / review / collaboration
+	Path              string   `json:"path,omitempty"`
+	Review            string   `json:"review,omitempty"`
+	Prompt            string   `json:"prompt,omitempty"`
+	SenderThreadID    string   `json:"senderThreadId,omitempty"`
+	ReceiverThreadIDs []string `json:"receiverThreadIds,omitempty"`
 
 	// web_search
 	Query string `json:"query,omitempty"`
@@ -112,6 +128,122 @@ type CodexItem struct {
 
 	// error
 	Message string `json:"message,omitempty"`
+}
+
+// UnmarshalJSON preserves the full item payload and normalizes fields whose
+// shape differs across Codex backends and protocol versions.
+func (c *CodexItem) UnmarshalJSON(data []byte) error {
+	type alias struct {
+		ID                string         `json:"id"`
+		Type              ItemType       `json:"type"`
+		Text              string         `json:"text,omitempty"`
+		Command           string         `json:"command,omitempty"`
+		AggregatedOutput  string         `json:"aggregatedOutput,omitempty"`
+		ExitCode          *int           `json:"exitCode,omitempty"`
+		Status            string         `json:"status,omitempty"`
+		Changes           []FileChange   `json:"changes,omitempty"`
+		Server            string         `json:"server,omitempty"`
+		Tool              string         `json:"tool,omitempty"`
+		Result            any            `json:"result,omitempty"`
+		Error             any            `json:"error,omitempty"`
+		Name              string         `json:"name,omitempty"`
+		Arguments         map[string]any `json:"arguments,omitempty"`
+		ContentItems      []ContentItem  `json:"contentItems,omitempty"`
+		Success           *bool          `json:"success,omitempty"`
+		Path              string         `json:"path,omitempty"`
+		Review            string         `json:"review,omitempty"`
+		Prompt            string         `json:"prompt,omitempty"`
+		SenderThreadID    string         `json:"senderThreadId,omitempty"`
+		ReceiverThreadIDs []string       `json:"receiverThreadIds,omitempty"`
+		Query             string         `json:"query,omitempty"`
+		Items             []TodoItem     `json:"items,omitempty"`
+		Message           string         `json:"message,omitempty"`
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	c.ID = decoded.ID
+	c.Type = decoded.Type
+	c.Raw = raw
+	c.Text = decoded.Text
+	c.Command = decoded.Command
+	c.AggregatedOutput = decoded.AggregatedOutput
+	c.ExitCode = decoded.ExitCode
+	c.Status = decoded.Status
+	c.Changes = decoded.Changes
+	c.Server = decoded.Server
+	c.Tool = decoded.Tool
+	c.Result = decoded.Result
+	c.Error = decoded.Error
+	c.Name = decoded.Name
+	c.Arguments = decoded.Arguments
+	c.ContentItems = decoded.ContentItems
+	c.Success = decoded.Success
+	c.Path = decoded.Path
+	c.Review = decoded.Review
+	c.Prompt = decoded.Prompt
+	c.SenderThreadID = decoded.SenderThreadID
+	c.ReceiverThreadIDs = decoded.ReceiverThreadIDs
+	c.Query = decoded.Query
+	c.Items = decoded.Items
+	c.Message = decoded.Message
+
+	if c.AggregatedOutput == "" {
+		if aggregatedOutput, ok := raw["aggregated_output"].(string); ok {
+			c.AggregatedOutput = aggregatedOutput
+		}
+	}
+
+	if c.AggregatedOutput == "" {
+		if aggregatedOutput, ok := raw["aggregatedOutput"].(string); ok {
+			c.AggregatedOutput = aggregatedOutput
+		}
+	}
+
+	if c.ExitCode == nil {
+		if exitCode, ok := raw["exit_code"].(float64); ok {
+			value := int(exitCode)
+			c.ExitCode = &value
+		}
+	}
+
+	if c.ExitCode == nil {
+		if exitCode, ok := raw["exitCode"].(float64); ok {
+			value := int(exitCode)
+			c.ExitCode = &value
+		}
+	}
+
+	if len(c.ContentItems) == 0 {
+		c.ContentItems = extractToolResultContentItems(decoded.Result)
+	}
+
+	if c.Success == nil {
+		switch decoded.Status {
+		case "completed":
+			if len(c.ContentItems) > 0 || decoded.Result != nil {
+				success := true
+				c.Success = &success
+			}
+		case "failed":
+			success := false
+			c.Success = &success
+		}
+	}
+
+	if c.Success != nil && !*c.Success && len(c.ContentItems) == 0 {
+		c.ContentItems = errorPayloadToContentItems(decoded.Error)
+	}
+
+	return nil
 }
 
 // FileChange represents a single file modification.
@@ -133,19 +265,27 @@ func (f *FileChange) UnmarshalJSON(data []byte) error {
 
 	f.Path = raw.Path
 
-	kind, ok := raw.Kind.(map[string]any)
-	if !ok {
+	switch kind := raw.Kind.(type) {
+	case string:
+		if kind == "" {
+			return fmt.Errorf("file change: missing or invalid kind string")
+		}
+
+		f.Kind = kind
+
+		return nil
+	case map[string]any:
+		kindType, ok := kind["type"].(string)
+		if !ok || kindType == "" {
+			return fmt.Errorf("file change: missing or invalid kind type")
+		}
+
+		f.Kind = kindType
+
+		return nil
+	default:
 		return fmt.Errorf("file change: missing or invalid kind object")
 	}
-
-	kindType, ok := kind["type"].(string)
-	if !ok || kindType == "" {
-		return fmt.Errorf("file change: missing or invalid kind type")
-	}
-
-	f.Kind = kindType
-
-	return nil
 }
 
 // TodoItem represents an item in a todo list.
@@ -186,9 +326,10 @@ func (c *ContentItem) UnmarshalJSON(data []byte) error {
 //
 //nolint:tagliatelle // JSON tags match Codex CLI wire format.
 type CodexUsage struct {
-	InputTokens       int `json:"input_tokens"`
-	CachedInputTokens int `json:"cached_input_tokens"`
-	OutputTokens      int `json:"output_tokens"`
+	InputTokens           int `json:"input_tokens"`
+	CachedInputTokens     int `json:"cached_input_tokens"`
+	OutputTokens          int `json:"output_tokens"`
+	ReasoningOutputTokens int `json:"reasoning_output_tokens"`
 }
 
 // ParseCodexEvent converts a raw JSON map into a typed CodexEvent.
@@ -204,4 +345,68 @@ func ParseCodexEvent(raw map[string]any) (*CodexEvent, error) {
 	}
 
 	return &event, nil
+}
+
+func extractToolResultContentItems(result any) []ContentItem {
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	content, ok := resultMap["content"].([]any)
+	if !ok || len(content) == 0 {
+		return nil
+	}
+
+	items := make([]ContentItem, 0, len(content))
+	for _, entry := range content {
+		entryMap, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		data, err := json.Marshal(entryMap)
+		if err != nil {
+			continue
+		}
+
+		var item ContentItem
+		if err := json.Unmarshal(data, &item); err != nil {
+			continue
+		}
+
+		items = append(items, item)
+	}
+
+	if len(items) == 0 {
+		return nil
+	}
+
+	return items
+}
+
+func errorPayloadToContentItems(errPayload any) []ContentItem {
+	errMap, ok := errPayload.(map[string]any)
+	if !ok || len(errMap) == 0 {
+		return nil
+	}
+
+	message, _ := errMap["message"].(string)
+	if message == "" {
+		data, err := json.Marshal(errMap)
+		if err != nil {
+			return nil
+		}
+
+		message = string(data)
+	}
+
+	return []ContentItem{{
+		Type: "text",
+		Text: message,
+		Raw: map[string]any{
+			"type": "text",
+			"text": message,
+		},
+	}}
 }
