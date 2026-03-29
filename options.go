@@ -66,6 +66,13 @@ func WithPermissionMode(mode string) Option {
 	}
 }
 
+// WithMaxTurns sets the maximum number of conversation turns.
+func WithMaxTurns(maxTurns int) Option {
+	return func(o *CodexAgentOptions) {
+		o.MaxTurns = maxTurns
+	}
+}
+
 // WithCwd sets the working directory for the CLI process.
 func WithCwd(cwd string) Option {
 	return func(o *CodexAgentOptions) {

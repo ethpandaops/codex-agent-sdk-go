@@ -475,9 +475,10 @@ func TestSession_HandleRequestUserInput_WithCallback(t *testing.T) {
 			"turn_id":   "turn_3",
 			"questions": []any{
 				map[string]any{
-					"id":       "lang",
-					"header":   "Language",
-					"question": "Which language?",
+					"id":           "lang",
+					"header":       "Language",
+					"question":     "Which language?",
+					"multi_select": true,
 					"options": []any{
 						map[string]any{"label": "Go", "description": "Fast compiled"},
 						map[string]any{"label": "Rust", "description": "Memory safe"},
@@ -497,6 +498,7 @@ func TestSession_HandleRequestUserInput_WithCallback(t *testing.T) {
 	require.Equal(t, "lang", captured.Questions[0].ID)
 	require.Equal(t, "Language", captured.Questions[0].Header)
 	require.Equal(t, "Which language?", captured.Questions[0].Question)
+	require.True(t, captured.Questions[0].MultiSelect)
 	require.Len(t, captured.Questions[0].Options, 3)
 	require.Equal(t, "Rust", captured.Questions[0].Options[1].Label)
 

@@ -47,6 +47,7 @@ var optionCapabilities = []OptionCapability{
 	},
 	{Field: "Model", OptionName: "WithModel", Exec: SupportSupported, AppServer: SupportSupported},
 	{Field: "PermissionMode", OptionName: "WithPermissionMode", Exec: SupportSupported, AppServer: SupportSupported},
+	{Field: "MaxTurns", OptionName: "WithMaxTurns", Exec: SupportSupported, AppServer: SupportSupported},
 	{Field: "Cwd", OptionName: "WithCwd", Exec: SupportSupported, AppServer: SupportSupported},
 	{Field: "CliPath", OptionName: "WithCliPath", Exec: SupportSupported, AppServer: SupportSupported},
 	{Field: "Env", OptionName: "WithEnv", Exec: SupportSupported, AppServer: SupportSupported},
@@ -152,6 +153,7 @@ func EnabledOptionFields(opts *Options) map[string]bool {
 	set("SystemPromptPreset", opts.SystemPromptPreset != nil)
 	set("Model", opts.Model != "")
 	set("PermissionMode", opts.PermissionMode != "")
+	set("MaxTurns", opts.MaxTurns > 0)
 	set("Cwd", opts.Cwd != "")
 	set("CliPath", opts.CliPath != "")
 	set("Env", len(opts.Env) > 0)

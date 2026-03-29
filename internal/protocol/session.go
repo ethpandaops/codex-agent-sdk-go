@@ -145,6 +145,10 @@ func (s *Session) buildInitializePayload() map[string]any {
 		payload["model"] = s.options.Model
 	}
 
+	if s.options.MaxTurns > 0 {
+		payload["maxTurns"] = s.options.MaxTurns
+	}
+
 	if s.options.Cwd != "" {
 		payload["cwd"] = s.options.Cwd
 	}
@@ -690,6 +694,14 @@ func parseUserInputRequest(req *ControlRequest) (*userinput.Request, error) {
 		q.ID, _ = qMap["id"].(string)
 		q.Header, _ = qMap["header"].(string)
 		q.Question, _ = qMap["question"].(string)
+
+		q.MultiSelect, _ = qMap["multiSelect"].(bool)
+		if !q.MultiSelect {
+			if multiSelectSnake, ok := qMap["multi_select"].(bool); ok {
+				q.MultiSelect = multiSelectSnake
+			}
+		}
+
 		q.IsOther, _ = qMap["is_other"].(bool)
 		q.IsSecret, _ = qMap["is_secret"].(bool)
 

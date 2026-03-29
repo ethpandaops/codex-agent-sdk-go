@@ -83,6 +83,9 @@ type Options struct {
 	// "bypassPermissions".
 	PermissionMode string
 
+	// MaxTurns sets the maximum number of conversation turns.
+	MaxTurns int
+
 	// Cwd sets the working directory for the CLI process.
 	Cwd string
 
