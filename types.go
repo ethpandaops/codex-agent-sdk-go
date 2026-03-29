@@ -109,6 +109,9 @@ type UserMessage = message.UserMessage
 // AuditEnvelope captures the provider-native event payload emitted by the SDK.
 type AuditEnvelope = message.AuditEnvelope
 
+// NewAuditEnvelope creates an audit envelope from a typed payload.
+var NewAuditEnvelope = message.NewAuditEnvelope
+
 // UserMessageContent represents content that can be either a string or []ContentBlock.
 type UserMessageContent = message.UserMessageContent
 

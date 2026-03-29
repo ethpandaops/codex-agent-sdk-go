@@ -1,10 +1,12 @@
 package message
 
 import (
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -820,4 +822,123 @@ func TestCodexUsage_ReasoningOutputTokens(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, result.Usage)
 	require.Equal(t, 75, result.Usage.ReasoningOutputTokens)
+}
+
+func TestParse_AttachesAuditEnvelope_AssistantMessage(t *testing.T) {
+	logger := slog.Default()
+
+	data := map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"content": []any{
+				map[string]any{"type": "text", "text": "hello"},
+			},
+			"model": "codex-mini-latest",
+		},
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err)
+
+	am, ok := msg.(*AssistantMessage)
+	require.True(t, ok)
+	require.NotNil(t, am.Audit)
+	assert.Equal(t, "assistant", am.Audit.EventType)
+	assert.NotNil(t, am.Audit.Payload)
+
+	var payload map[string]any
+
+	err = json.Unmarshal(am.Audit.Payload, &payload)
+	require.NoError(t, err)
+	assert.Equal(t, "assistant", payload["type"])
+}
+
+func TestParse_AttachesAuditEnvelope_SystemMessage(t *testing.T) {
+	logger := slog.Default()
+
+	data := map[string]any{
+		"type":    "system",
+		"subtype": "task.started",
+		"data":    map[string]any{"turn_id": "turn-1"},
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err)
+
+	sm, ok := msg.(*TaskStartedMessage)
+	require.True(t, ok)
+	require.NotNil(t, sm.Audit)
+	assert.Equal(t, "system", sm.Audit.EventType)
+	assert.Equal(t, "task.started", sm.Audit.Subtype)
+}
+
+func TestParse_AttachesAuditEnvelope_ResultMessage(t *testing.T) {
+	logger := slog.Default()
+
+	data := map[string]any{
+		"type":       "result",
+		"subtype":    "success",
+		"is_error":   false,
+		"session_id": "sess-1",
+		"result":     "done",
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err)
+
+	rm, ok := msg.(*ResultMessage)
+	require.True(t, ok)
+	require.NotNil(t, rm.Audit)
+	assert.Equal(t, "result", rm.Audit.EventType)
+	assert.Equal(t, "success", rm.Audit.Subtype)
+}
+
+func TestParse_AuditPayloadPreservesRawWireData(t *testing.T) {
+	logger := slog.Default()
+
+	data := map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"content": []any{},
+			"model":   "test-model",
+		},
+		"custom_field": "preserved",
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err)
+
+	am, ok := msg.(*AssistantMessage)
+	require.True(t, ok)
+	require.NotNil(t, am.Audit)
+
+	var payload map[string]any
+
+	err = json.Unmarshal(am.Audit.Payload, &payload)
+	require.NoError(t, err)
+	assert.Equal(t, "preserved", payload["custom_field"])
+}
+
+func TestNewAuditEnvelope_PublicConstructor(t *testing.T) {
+	type testPayload struct {
+		Key string `json:"key"`
+	}
+
+	env, err := NewAuditEnvelope("test_event", "test_sub", testPayload{Key: "val"})
+	require.NoError(t, err)
+	require.NotNil(t, env)
+	assert.Equal(t, "test_event", env.EventType)
+	assert.Equal(t, "test_sub", env.Subtype)
+
+	var payload map[string]any
+
+	err = json.Unmarshal(env.Payload, &payload)
+	require.NoError(t, err)
+	assert.Equal(t, "val", payload["key"])
+}
+
+func TestNewAuditEnvelope_MarshalError(t *testing.T) {
+	env, err := NewAuditEnvelope("event", "sub", make(chan int))
+	assert.Error(t, err)
+	assert.Nil(t, env)
 }

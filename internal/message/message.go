@@ -1,6 +1,9 @@
 package message
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Message represents any message in the conversation.
 // Use type assertion or type switch to determine the concrete type.
@@ -10,6 +13,8 @@ type Message interface {
 
 // AuditEnvelope contains the provider-native event metadata and canonical payload
 // captured at the SDK boundary.
+//
+//nolint:tagliatelle // wire format uses snake_case
 type AuditEnvelope struct {
 	EventType string          `json:"event_type"`
 	Subtype   string          `json:"subtype,omitempty"`
@@ -38,6 +43,20 @@ func (a *AuditEnvelope) GetPayload() json.RawMessage {
 	}
 
 	return a.Payload
+}
+
+// NewAuditEnvelope marshals a canonical payload into an audit envelope.
+func NewAuditEnvelope(eventType, subtype string, payload any) (*AuditEnvelope, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal audit payload: %w", err)
+	}
+
+	return &AuditEnvelope{
+		EventType: eventType,
+		Subtype:   subtype,
+		Payload:   data,
+	}, nil
 }
 
 // Compile-time verification that all message types implement Message.
