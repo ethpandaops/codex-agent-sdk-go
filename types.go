@@ -106,6 +106,9 @@ type Message = message.Message
 // UserMessage represents a message from the user.
 type UserMessage = message.UserMessage
 
+// AuditEnvelope captures the provider-native event payload emitted by the SDK.
+type AuditEnvelope = message.AuditEnvelope
+
 // UserMessageContent represents content that can be either a string or []ContentBlock.
 type UserMessageContent = message.UserMessageContent
 

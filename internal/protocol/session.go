@@ -14,6 +14,7 @@ import (
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/permission"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/userinput"
 )
@@ -661,6 +662,17 @@ func parseUserInputRequest(req *ControlRequest) (*userinput.Request, error) {
 	result.ThreadID, _ = req.Request["thread_id"].(string)
 	result.TurnID, _ = req.Request["turn_id"].(string)
 
+	payload, err := json.Marshal(req.Request)
+	if err != nil {
+		return nil, fmt.Errorf("marshal user input request: %w", err)
+	}
+
+	result.Audit = &message.AuditEnvelope{
+		EventType: "item_tool/requestUserInput",
+		Subtype:   "request",
+		Payload:   payload,
+	}
+
 	questionsRaw, _ := req.Request["questions"].([]any)
 	if len(questionsRaw) == 0 {
 		return result, nil
@@ -719,6 +731,15 @@ func serializeUserInputResponse(resp *userinput.Response) map[string]any {
 
 		answers[qID] = map[string]any{
 			"answers": answer.Answers,
+		}
+	}
+
+	payload, err := json.Marshal(map[string]any{"answers": answers})
+	if err == nil {
+		resp.Audit = &message.AuditEnvelope{
+			EventType: "item_tool/requestUserInput",
+			Subtype:   "response",
+			Payload:   payload,
 		}
 	}
 
