@@ -12,6 +12,7 @@ import (
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	sdkerrors "github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
 )
 
 // appServerRPC defines the JSON-RPC operations that AppServerAdapter
@@ -1479,6 +1480,10 @@ func (a *AppServerAdapter) handleNotification(notif *RPCNotification) {
 	event := a.translateNotification(notif)
 	if event == nil {
 		return
+	}
+
+	if len(notif.Raw) > 0 {
+		event = message.AnnotateRawJSON(event, notif.Raw)
 	}
 
 	select {

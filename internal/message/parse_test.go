@@ -919,6 +919,19 @@ func TestParse_AuditPayloadPreservesRawWireData(t *testing.T) {
 	assert.Equal(t, "preserved", payload["custom_field"])
 }
 
+func TestParse_AuditPayloadPreservesOriginalJSONBytes(t *testing.T) {
+	logger := slog.Default()
+	raw := []byte("{\n  \"type\": \"assistant\",\n  \"message\": {\n    \"content\": [],\n    \"model\": \"test-model\"\n  },\n  \"provider_trace\": 1e+06,\n  \"provider_trace\": 1000000\n}")
+
+	msg, err := Parse(logger, raw)
+	require.NoError(t, err)
+
+	am, ok := msg.(*AssistantMessage)
+	require.True(t, ok)
+	require.NotNil(t, am.Audit)
+	assert.Equal(t, string(raw), string(am.Audit.Payload))
+}
+
 func TestNewAuditEnvelope_PublicConstructor(t *testing.T) {
 	type testPayload struct {
 		Key string `json:"key"`

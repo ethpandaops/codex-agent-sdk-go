@@ -10,9 +10,14 @@ import (
 )
 
 func newAuditEnvelope(data map[string]any) (*AuditEnvelope, error) {
-	payload, err := json.Marshal(data)
-	if err != nil {
-		return nil, fmt.Errorf("marshal audit payload: %w", err)
+	payload, ok := extractRawJSON(data)
+	if !ok {
+		var err error
+
+		payload, err = json.Marshal(stripRawJSON(data))
+		if err != nil {
+			return nil, fmt.Errorf("marshal audit payload: %w", err)
+		}
 	}
 
 	eventType, _ := data["type"].(string)
@@ -29,8 +34,40 @@ func newAuditEnvelope(data map[string]any) (*AuditEnvelope, error) {
 //
 // This function handles both Claude-style messages (with "type": "user"|"assistant"|etc.)
 // and Codex-style events (with "type": "thread.started"|"item.completed"|etc.).
-func Parse(log *slog.Logger, data map[string]any) (Message, error) {
+func Parse(log *slog.Logger, payload any) (Message, error) {
 	log = log.With("component", "message_parser")
+
+	var data map[string]any
+
+	switch raw := payload.(type) {
+	case map[string]any:
+		data = raw
+	case []byte:
+		if err := json.Unmarshal(raw, &data); err != nil {
+			return nil, &errors.MessageParseError{
+				Message: err.Error(),
+				Err:     err,
+			}
+		}
+
+		data = AnnotateRawJSON(data, raw)
+	case json.RawMessage:
+		if err := json.Unmarshal(raw, &data); err != nil {
+			return nil, &errors.MessageParseError{
+				Message: err.Error(),
+				Err:     err,
+			}
+		}
+
+		data = AnnotateRawJSON(data, raw)
+	default:
+		return nil, &errors.MessageParseError{
+			Message: fmt.Sprintf(
+				"unsupported payload type %T", payload,
+			),
+			Err: fmt.Errorf("unsupported payload type %T", payload),
+		}
+	}
 
 	msgType, ok := data["type"].(string)
 	if !ok {
