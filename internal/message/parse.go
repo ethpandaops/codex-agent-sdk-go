@@ -558,6 +558,22 @@ func parseCodexTurnCompleted(data map[string]any) (*ResultMessage, error) {
 		result.Usage = usage
 	}
 
+	if sr, ok := data["stop_reason"].(string); ok {
+		result.StopReason = &sr
+	}
+
+	if dur, ok := data["duration_ms"].(float64); ok {
+		result.DurationMs = int(dur)
+	}
+
+	if nt, ok := data["num_turns"].(float64); ok {
+		result.NumTurns = int(nt)
+	}
+
+	if tc, ok := data["total_cost_usd"].(float64); ok {
+		result.TotalCostUSD = &tc
+	}
+
 	return result, nil
 }
 

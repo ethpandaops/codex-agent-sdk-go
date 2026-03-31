@@ -955,3 +955,87 @@ func TestNewAuditEnvelope_MarshalError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, env)
 }
+
+func TestParseResultMessage_DirectFields(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.Default()
+	stopReason := "end_turn"
+	cost := 0.0042
+
+	data := map[string]any{
+		"type":           "result",
+		"subtype":        "success",
+		"is_error":       false,
+		"session_id":     "sess-123",
+		"stop_reason":    stopReason,
+		"duration_ms":    float64(1500),
+		"num_turns":      float64(3),
+		"total_cost_usd": cost,
+		"result":         "hello",
+		"usage": map[string]any{
+			"input_tokens":  float64(100),
+			"output_tokens": float64(50),
+		},
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err)
+
+	rm, ok := msg.(*ResultMessage)
+	require.True(t, ok)
+
+	assert.Equal(t, "sess-123", rm.SessionID)
+	require.NotNil(t, rm.StopReason)
+	assert.Equal(t, "end_turn", *rm.StopReason)
+	assert.Equal(t, 1500, rm.DurationMs)
+	assert.Equal(t, 3, rm.NumTurns)
+	require.NotNil(t, rm.TotalCostUSD)
+	assert.InDelta(t, cost, *rm.TotalCostUSD, 1e-9)
+}
+
+func TestParseCodexTurnCompleted_DirectFields(t *testing.T) {
+	t.Parallel()
+
+	cost := 0.125
+
+	data := map[string]any{
+		"type":           "response.completed",
+		"stop_reason":    "end_turn",
+		"duration_ms":    float64(2500),
+		"num_turns":      float64(7),
+		"total_cost_usd": cost,
+		"usage": map[string]any{
+			"input_tokens":            float64(200),
+			"output_tokens":           float64(100),
+			"cached_input_tokens":     float64(50),
+			"reasoning_output_tokens": float64(25),
+		},
+	}
+
+	msg, err := parseCodexTurnCompleted(data)
+	require.NoError(t, err)
+
+	require.NotNil(t, msg.StopReason)
+	assert.Equal(t, "end_turn", *msg.StopReason)
+	assert.Equal(t, 2500, msg.DurationMs)
+	assert.Equal(t, 7, msg.NumTurns)
+	require.NotNil(t, msg.TotalCostUSD)
+	assert.InDelta(t, cost, *msg.TotalCostUSD, 1e-9)
+}
+
+func TestParseCodexTurnCompleted_MissingOptionalFields(t *testing.T) {
+	t.Parallel()
+
+	data := map[string]any{
+		"type": "response.completed",
+	}
+
+	msg, err := parseCodexTurnCompleted(data)
+	require.NoError(t, err)
+
+	assert.Nil(t, msg.StopReason)
+	assert.Equal(t, 0, msg.DurationMs)
+	assert.Equal(t, 0, msg.NumTurns)
+	assert.Nil(t, msg.TotalCostUSD)
+}

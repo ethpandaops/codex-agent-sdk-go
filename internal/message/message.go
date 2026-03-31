@@ -251,6 +251,10 @@ type ResultMessage struct {
 	Subtype          string         `json:"subtype"`
 	IsError          bool           `json:"is_error"`
 	SessionID        string         `json:"session_id"`
+	StopReason       *string        `json:"stop_reason,omitempty"`
+	DurationMs       int            `json:"duration_ms"`
+	NumTurns         int            `json:"num_turns"`
+	TotalCostUSD     *float64       `json:"total_cost_usd,omitempty"`
 	Usage            *Usage         `json:"usage,omitempty"`
 	Result           *string        `json:"result,omitempty"`
 	StructuredOutput any            `json:"structured_output,omitempty"`
