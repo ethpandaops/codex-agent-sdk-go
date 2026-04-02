@@ -12,6 +12,7 @@ import (
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	sdkerrors "github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/schema"
 )
 
 // appServerRPC defines the JSON-RPC operations that AppServerAdapter
@@ -2089,10 +2090,17 @@ func normalizeOutputSchema(value any) (any, error) {
 
 		formatType, _ := m["type"].(string)
 		if formatType == "json_schema" {
-			if schema, ok := m["schema"]; ok {
-				return cloneAnyValue(schema)
+			if inner, ok := m["schema"]; ok {
+				cloned := cloneAnyValue(inner)
+				if cm, isMap := cloned.(map[string]any); isMap {
+					schema.EnforceAdditionalProperties(cm)
+				}
+
+				return cloned
 			}
 		}
+
+		schema.EnforceAdditionalProperties(m)
 
 		return parsed
 	}
