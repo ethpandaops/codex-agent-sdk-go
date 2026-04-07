@@ -16,6 +16,7 @@ import (
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/permission"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/schema"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/userinput"
 )
 
@@ -354,14 +355,18 @@ func extractOutputSchema(outputFormat map[string]any) map[string]any {
 
 	formatType, _ := outputFormat["type"].(string)
 	if formatType == "json_schema" {
-		if schema, ok := outputFormat["schema"].(map[string]any); ok {
-			return schema
+		if s, ok := outputFormat["schema"].(map[string]any); ok {
+			schema.EnforceAdditionalProperties(s)
+
+			return s
 		}
 
 		return nil
 	}
 
 	if _, ok := outputFormat["properties"]; ok {
+		schema.EnforceAdditionalProperties(outputFormat)
+
 		return outputFormat
 	}
 
