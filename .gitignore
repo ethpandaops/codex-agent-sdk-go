@@ -44,7 +44,7 @@ hello.go
 memories/
 cancellation_demo.txt
 developer_instructions
-extended_thinking
+/extended_thinking
 graceful_shutdown_demo.txt
 personality
 service_tier
