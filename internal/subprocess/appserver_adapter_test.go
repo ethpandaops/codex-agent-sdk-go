@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/stretchr/testify/require"
 )
+
+const testThreadID = "thread_test"
 
 // Compile-time check that mockAppServerRPC implements appServerRPC.
 var _ appServerRPC = (*mockAppServerRPC)(nil)
@@ -159,6 +162,7 @@ func newTestAdapter(mock *mockAppServerRPC) *AppServerAdapter {
 		done:                    make(chan struct{}),
 		pendingRPCRequests:      make(map[string]int64, 8),
 		lastAssistantTextByTurn: make(map[string]string, 8),
+		reasoningTextByItem:     make(map[string]*strings.Builder, 8),
 		turnHasOutputSchema:     make(map[string]bool, 8),
 		sdkMCPServerNames:       make(map[string]struct{}, 8),
 	}
@@ -2575,7 +2579,7 @@ func TestAppServerAdapter_DeltaEmission_WhenEnabled(t *testing.T) {
 	mock := newMockAppServerRPC()
 	adapter := newTestAdapter(mock)
 	adapter.includePartialMessages = true
-	adapter.threadID = "thread_test"
+	adapter.threadID = testThreadID
 
 	defer func() {
 		close(adapter.done)
@@ -2593,7 +2597,7 @@ func TestAppServerAdapter_DeltaEmission_WhenEnabled(t *testing.T) {
 	case msg := <-adapter.messages:
 		require.Equal(t, "stream_event", msg["type"])
 		require.Equal(t, "item_2", msg["uuid"])
-		require.Equal(t, "thread_test", msg["session_id"])
+		require.Equal(t, testThreadID, msg["session_id"])
 
 		event, ok := msg["event"].(map[string]any)
 		require.True(t, ok)
@@ -2612,7 +2616,7 @@ func TestAppServerAdapter_ReasoningTextDeltaEmission_WhenEnabled(t *testing.T) {
 	mock := newMockAppServerRPC()
 	adapter := newTestAdapter(mock)
 	adapter.includePartialMessages = true
-	adapter.threadID = "thread_test"
+	adapter.threadID = testThreadID
 
 	defer func() {
 		close(adapter.done)
@@ -2623,7 +2627,7 @@ func TestAppServerAdapter_ReasoningTextDeltaEmission_WhenEnabled(t *testing.T) {
 	mock.notifyCh <- &RPCNotification{
 		JSONRPC: "2.0",
 		Method:  "item/reasoning/textDelta",
-		Params:  json.RawMessage(`{"delta":"thinking","itemId":"reason_1","contentIndex":0,"threadId":"thread_test","turnId":"turn_1"}`),
+		Params:  json.RawMessage(`{"delta":"thinking","itemId":"reason_1","contentIndex":0,"threadId":"` + testThreadID + `","turnId":"turn_1"}`),
 	}
 
 	select {
@@ -2631,7 +2635,7 @@ func TestAppServerAdapter_ReasoningTextDeltaEmission_WhenEnabled(t *testing.T) {
 		require.Equal(t, "stream_event", msg["type"],
 			"reasoning text deltas should surface as partial stream events instead of generic system messages")
 		require.Equal(t, "reason_1", msg["uuid"])
-		require.Equal(t, "thread_test", msg["session_id"])
+		require.Equal(t, testThreadID, msg["session_id"])
 
 		event, ok := msg["event"].(map[string]any)
 		require.True(t, ok)
@@ -2639,10 +2643,160 @@ func TestAppServerAdapter_ReasoningTextDeltaEmission_WhenEnabled(t *testing.T) {
 
 		delta, ok := event["delta"].(map[string]any)
 		require.True(t, ok)
-		require.Equal(t, "text_delta", delta["type"])
-		require.Equal(t, "thinking", delta["text"])
+		require.Equal(t, "thinking_delta", delta["type"],
+			"reasoning deltas must use thinking_delta to distinguish from text_delta")
+		require.Equal(t, "thinking", delta["thinking"])
 	case <-time.After(time.Second):
 		t.Fatal("expected stream_event message from reasoning delta")
+	}
+}
+
+func TestAppServerAdapter_ReasoningSummaryDeltaEmission(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.includePartialMessages = true
+	adapter.threadID = testThreadID
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/reasoning/summaryTextDelta",
+		Params:  json.RawMessage(`{"delta":"summary text","itemId":"reason_1","threadId":"` + testThreadID + `"}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		require.Equal(t, "stream_event", msg["type"])
+
+		event, ok := msg["event"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "content_block_delta", event["type"])
+
+		delta, ok := event["delta"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "thinking_delta", delta["type"],
+			"summary deltas must also use thinking_delta type")
+		require.Equal(t, "summary text", delta["thinking"])
+	case <-time.After(time.Second):
+		t.Fatal("expected stream_event from summary delta")
+	}
+}
+
+func TestAppServerAdapter_ReasoningDeltaAccumulation(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.includePartialMessages = true
+	adapter.threadID = testThreadID
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	// Stream reasoning deltas.
+	for _, delta := range []string{"Let me ", "think ", "about this."} {
+		mock.notifyCh <- &RPCNotification{
+			JSONRPC: "2.0",
+			Method:  "item/reasoning/textDelta",
+			Params:  json.RawMessage(`{"delta":"` + delta + `","itemId":"reason_1","threadId":"` + testThreadID + `"}`),
+		}
+
+		// Drain the stream event.
+		select {
+		case <-adapter.messages:
+		case <-time.After(time.Second):
+			t.Fatal("expected stream_event from reasoning delta")
+		}
+	}
+
+	// Complete the reasoning item with an empty summary.
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/completed",
+		Params: json.RawMessage(`{
+			"item":{
+				"type":"reasoning",
+				"id":"reason_1",
+				"summary":[],
+				"content":[]
+			}
+		}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		require.Equal(t, "item.completed", msg["type"])
+
+		item, ok := msg["item"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "reasoning", item["type"])
+		require.Equal(t, "Let me think about this.", item["text"],
+			"accumulated reasoning deltas should populate text when summary is empty")
+	case <-time.After(time.Second):
+		t.Fatal("expected item.completed with accumulated reasoning text")
+	}
+
+	// Verify accumulator was cleaned up.
+	adapter.mu.Lock()
+	_, exists := adapter.reasoningTextByItem["reason_1"]
+	adapter.mu.Unlock()
+
+	require.False(t, exists, "accumulator entry should be cleaned up after item.completed")
+}
+
+func TestAppServerAdapter_ReasoningDeltaAccumulation_SummaryTakesPrecedence(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.includePartialMessages = true
+	adapter.threadID = testThreadID
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	// Stream a reasoning delta.
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/reasoning/textDelta",
+		Params:  json.RawMessage(`{"delta":"raw reasoning","itemId":"reason_2","threadId":"` + testThreadID + `"}`),
+	}
+
+	select {
+	case <-adapter.messages:
+	case <-time.After(time.Second):
+		t.Fatal("expected stream_event")
+	}
+
+	// Complete with a populated summary — summary should win.
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/completed",
+		Params: json.RawMessage(`{
+			"item":{
+				"type":"reasoning",
+				"id":"reason_2",
+				"summary":["The answer is","42."],
+				"content":[]
+			}
+		}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		item, ok := msg["item"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "The answer is\n42.", item["text"],
+			"populated summary should take precedence over accumulated deltas")
+	case <-time.After(time.Second):
+		t.Fatal("expected item.completed")
 	}
 }
 
@@ -2809,4 +2963,52 @@ func TestTranslateNotification_ErrorMethod(t *testing.T) {
 	require.NotNil(t, event)
 	require.Equal(t, "error", event["type"])
 	require.Equal(t, "test error from CLI", event["message"])
+}
+
+func TestEnsureDefaultModel(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no default set picks gpt-5.3-codex", func(t *testing.T) {
+		t.Parallel()
+
+		models := []map[string]any{
+			{"id": "gpt-4.1-mini"},
+			{"id": "gpt-5.3-codex"},
+			{"id": "o3-pro"},
+		}
+
+		ensureDefaultModel(models)
+
+		require.Equal(t, true, models[1]["isDefault"])
+		require.Nil(t, models[0]["isDefault"])
+		require.Nil(t, models[2]["isDefault"])
+	})
+
+	t.Run("existing default is preserved", func(t *testing.T) {
+		t.Parallel()
+
+		models := []map[string]any{
+			{"id": "gpt-4.1-mini", "isDefault": true},
+			{"id": "gpt-5.3-codex"},
+		}
+
+		ensureDefaultModel(models)
+
+		require.Equal(t, true, models[0]["isDefault"])
+		require.Nil(t, models[1]["isDefault"])
+	})
+
+	t.Run("fallback model not present is noop", func(t *testing.T) {
+		t.Parallel()
+
+		models := []map[string]any{
+			{"id": "gpt-4.1-mini"},
+			{"id": "o3-pro"},
+		}
+
+		ensureDefaultModel(models)
+
+		require.Nil(t, models[0]["isDefault"])
+		require.Nil(t, models[1]["isDefault"])
+	})
 }

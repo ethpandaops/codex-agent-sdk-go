@@ -234,6 +234,29 @@ func TestParseCodexAgentMessageDeltaSuppression(t *testing.T) {
 	}
 }
 
+func TestParseCodexReasoningItemWithText(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"type": "reasoning",
+			"id":   "reason_1",
+			"text": "Let me think about this problem step by step.",
+		},
+	})
+	require.NoError(t, err)
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok, "reasoning item with text should produce AssistantMessage")
+	require.Len(t, assistant.Content, 1)
+
+	thinking, ok := assistant.Content[0].(*ThinkingBlock)
+	require.True(t, ok, "expected ThinkingBlock")
+	require.Equal(t, BlockTypeThinking, thinking.Type)
+	require.Equal(t, "Let me think about this problem step by step.", thinking.Thinking)
+}
+
 func TestParseCodexDynamicToolCall(t *testing.T) {
 	logger := slog.Default()
 

@@ -40,9 +40,13 @@ func main() {
 				continue
 			}
 
-			if delta["type"] == "text_delta" {
+			switch delta["type"] {
+			case "text_delta":
 				text, _ := delta["text"].(string)
 				fmt.Print(text)
+			case "thinking_delta":
+				thinking, _ := delta["thinking"].(string)
+				fmt.Printf("[thinking] %s", thinking)
 			}
 
 		case *codexsdk.AssistantMessage:
