@@ -217,6 +217,18 @@ func WithOnUserInput(callback UserInputCallback) Option {
 	}
 }
 
+// ===== Elicitation =====
+
+// WithOnElicitation sets a callback for handling MCP elicitation requests.
+// The callback is invoked when an MCP server sends an elicitation/create request
+// through the CLI, allowing the SDK consumer to present forms or collect input.
+// If not set, elicitation requests are auto-declined.
+func WithOnElicitation(callback ElicitationCallback) Option {
+	return func(o *CodexAgentOptions) {
+		o.OnElicitation = callback
+	}
+}
+
 // ===== Session =====
 
 // WithContinueConversation indicates whether to continue an existing conversation.

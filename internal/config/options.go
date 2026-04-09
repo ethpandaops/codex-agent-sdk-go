@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/elicitation"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/hook"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/permission"
@@ -135,6 +136,10 @@ type Options struct {
 	// This callback allows the SDK consumer to answer questions posed by the agent
 	// (e.g., multiple-choice or free-text prompts in plan mode).
 	OnUserInput userinput.Callback
+
+	// OnElicitation is called when the CLI sends mcpServer/elicitation/request.
+	// If nil, elicitation requests are auto-declined.
+	OnElicitation elicitation.Callback
 
 	// ===== CLAUDE SDK PARITY FIELDS =====
 

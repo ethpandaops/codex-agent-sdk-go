@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/elicitation"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/permission"
@@ -67,6 +68,12 @@ func (s *Session) RegisterHandlers() {
 	s.controller.RegisterHandler("item_fileChange/requestApproval", s.HandleFileChangeApproval)
 	s.controller.RegisterHandler("item_fileChange_requestApproval", s.HandleFileChangeApproval)
 	s.controller.RegisterHandler("applyPatchApproval", s.HandleFileChangeApproval)
+
+	// MCP elicitation (app-server sends mcpServer/elicitation/request).
+	s.controller.RegisterHandler("mcpServer_elicitation/request", s.HandleMCPElicitation)
+
+	// Permissions approval (app-server sends item/permissions/requestApproval).
+	s.controller.RegisterHandler("item_permissions/requestApproval", s.HandlePermissionsApproval)
 
 	// External auth token refresh (used by current app-server external-auth mode).
 	s.controller.RegisterHandler("account_chatgptAuthTokens/refresh", s.HandleChatGPTAuthTokensRefresh)
@@ -418,6 +425,7 @@ func (s *Session) NeedsInitialization() bool {
 
 	return s.options.CanUseTool != nil ||
 		s.options.OnUserInput != nil ||
+		s.options.OnElicitation != nil ||
 		len(s.sdkMcpServers) > 0 ||
 		len(s.sdkDynamicTools) > 0
 }
@@ -931,7 +939,8 @@ func (s *Session) HandleFileChangeApproval(
 }
 
 // HandlePermissionsApproval handles item/permissions/requestApproval requests.
-// It routes through the CanUseTool callback if set, otherwise auto-accepts.
+// It routes through the CanUseTool callback if set, otherwise auto-approves
+// with the requested permissions scoped to the current turn.
 func (s *Session) HandlePermissionsApproval(
 	ctx context.Context,
 	req *ControlRequest,
@@ -942,12 +951,18 @@ func (s *Session) HandlePermissionsApproval(
 	default:
 	}
 
+	permissions, _ := req.Request["permissions"].(map[string]any)
+
 	if s.options == nil || s.options.CanUseTool == nil {
-		return map[string]any{"decision": "accept"}, nil
+		return map[string]any{
+			"permissions": permissions,
+			"scope":       "turn",
+		}, nil
 	}
 
 	input := make(map[string]any, 2)
-	if permissions, ok := req.Request["permissions"].(map[string]any); ok {
+
+	if permissions != nil {
 		input["permissions"] = permissions
 	}
 
@@ -962,9 +977,15 @@ func (s *Session) HandlePermissionsApproval(
 
 	switch decision.(type) {
 	case *permission.ResultAllow:
-		return map[string]any{"decision": "accept"}, nil
+		return map[string]any{
+			"permissions": permissions,
+			"scope":       "turn",
+		}, nil
 	case *permission.ResultDeny:
-		return map[string]any{"decision": "decline"}, nil
+		return map[string]any{
+			"permissions": map[string]any{},
+			"scope":       "turn",
+		}, nil
 	default:
 		return nil, fmt.Errorf(
 			"tool permission callback must return *ResultAllow or *ResultDeny, got %T",
@@ -974,12 +995,83 @@ func (s *Session) HandlePermissionsApproval(
 }
 
 // HandleMCPElicitation handles mcpServer/elicitation/request requests.
-// No SDK callback exists for this yet; auto-accepts.
+// It parses the request into typed elicitation types, invokes the OnElicitation
+// callback, and serializes the response back to the wire format.
+// If no callback is set, elicitation requests are auto-declined.
 func (s *Session) HandleMCPElicitation(
-	_ context.Context,
-	_ *ControlRequest,
+	ctx context.Context,
+	req *ControlRequest,
 ) (map[string]any, error) {
-	return map[string]any{"action": "accept", "content": nil}, nil
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	if s.options == nil || s.options.OnElicitation == nil {
+		return map[string]any{"action": string(elicitation.ActionDecline)}, nil
+	}
+
+	parsed := parseElicitationRequest(req)
+
+	resp, err := s.options.OnElicitation(ctx, parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return map[string]any{"action": string(elicitation.ActionDecline)}, nil
+	}
+
+	result := map[string]any{
+		"action": string(resp.Action),
+	}
+
+	if resp.Content != nil {
+		result["content"] = resp.Content
+	}
+
+	return result, nil
+}
+
+// parseElicitationRequest extracts a typed elicitation.Request from the wire format.
+func parseElicitationRequest(req *ControlRequest) *elicitation.Request {
+	result := &elicitation.Request{}
+	result.MCPServerName, _ = req.Request["serverName"].(string)
+	result.Message, _ = req.Request["message"].(string)
+	result.ThreadID, _ = req.Request["threadId"].(string)
+
+	if modeStr, ok := req.Request["mode"].(string); ok {
+		m := elicitation.Mode(modeStr)
+		result.Mode = &m
+	}
+
+	if urlStr, ok := req.Request["url"].(string); ok {
+		result.URL = &urlStr
+	}
+
+	if eid, ok := req.Request["elicitationId"].(string); ok {
+		result.ElicitationID = &eid
+	}
+
+	if turnID, ok := req.Request["turnId"].(string); ok {
+		result.TurnID = &turnID
+	}
+
+	if schema, ok := req.Request["requestedSchema"].(map[string]any); ok {
+		result.RequestedSchema = schema
+	}
+
+	payload, err := json.Marshal(req.Request)
+	if err == nil {
+		result.Audit = &message.AuditEnvelope{
+			EventType: "mcpServer_elicitation/request",
+			Subtype:   "request",
+			Payload:   payload,
+		}
+	}
+
+	return result
 }
 
 // HandleChatGPTAuthTokensRefresh handles account/chatgptAuthTokens/refresh

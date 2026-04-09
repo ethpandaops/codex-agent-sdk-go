@@ -63,6 +63,7 @@ var optionCapabilities = []OptionCapability{
 	{Field: "SDKTools", OptionName: "WithSDKTools", Exec: SupportUnsupported, AppServer: SupportSupported},
 	{Field: "CanUseTool", OptionName: "WithCanUseTool", Exec: SupportUnsupported, AppServer: SupportSupported},
 	{Field: "OnUserInput", OptionName: "WithOnUserInput", Exec: SupportUnsupported, AppServer: SupportSupported},
+	{Field: "OnElicitation", OptionName: "WithOnElicitation", Exec: SupportUnsupported, AppServer: SupportSupported},
 	{
 		Field: "Tools", OptionName: "WithTools", Exec: SupportUnsupported, AppServer: SupportEmulated,
 		Notes: "emulated via SDK can_use_tool policy (not a native codex option)",
@@ -166,6 +167,7 @@ func EnabledOptionFields(opts *Options) map[string]bool {
 	set("SDKTools", len(opts.SDKTools) > 0)
 	set("CanUseTool", opts.CanUseTool != nil)
 	set("OnUserInput", opts.OnUserInput != nil)
+	set("OnElicitation", opts.OnElicitation != nil)
 	set("Tools", opts.Tools != nil)
 	set("AllowedTools", len(opts.AllowedTools) > 0)
 	set("DisallowedTools", len(opts.DisallowedTools) > 0)
