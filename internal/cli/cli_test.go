@@ -87,6 +87,26 @@ func TestBuildExecArgs_WithoutModel(t *testing.T) {
 	require.NotContains(t, args, "-m")
 }
 
+// TestBuildExecArgs_WithMaxTurns tests command building with max turns option.
+func TestBuildExecArgs_WithMaxTurns(t *testing.T) {
+	options := &config.Options{
+		MaxTurns: 5,
+	}
+
+	args := BuildExecArgs("test", options)
+
+	require.Contains(t, args, "--max-turns")
+	require.Contains(t, args, "5")
+}
+
+// TestBuildExecArgs_WithoutMaxTurns tests that no --max-turns flag appears when max turns is zero.
+func TestBuildExecArgs_WithoutMaxTurns(t *testing.T) {
+	options := &config.Options{}
+	args := BuildExecArgs("test", options)
+
+	require.NotContains(t, args, "--max-turns")
+}
+
 // TestBuildExecArgs_WithSandboxDirect tests direct sandbox mode option.
 func TestBuildExecArgs_WithSandboxDirect(t *testing.T) {
 	options := &config.Options{

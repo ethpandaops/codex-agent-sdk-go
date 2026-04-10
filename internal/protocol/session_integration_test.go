@@ -64,7 +64,12 @@ func TestSessionRegisterHandlers_CoversCurrentCodexServerRequests(t *testing.T) 
 		"account/chatgptAuthTokens/refresh",
 		"applyPatchApproval",
 		"execCommandApproval",
+		"mcpServer/elicitation/request",
+		"item/permissions/requestApproval",
 	}
+
+	// Guard against accidental whitespace-only schema reads.
+	require.NotEmpty(t, strings.TrimSpace(serverRequestJSON))
 
 	for _, method := range liveMethods {
 		require.Contains(t, serverRequestJSON, `"`+method+`"`,
@@ -74,38 +79,4 @@ func TestSessionRegisterHandlers_CoversCurrentCodexServerRequests(t *testing.T) 
 		_, ok := controller.handlers[subtype]
 		require.True(t, ok, "no session handler registered for current codex server request %q (subtype %q)", method, subtype)
 	}
-}
-
-func TestSessionRegisterHandlers_DoesNotRegisterRequestTypesMissingFromCurrentCodexSchema(t *testing.T) {
-	schemaDir := generateSchemaDir(t)
-	serverRequestJSON := readSchemaFile(t, schemaDir, "ServerRequest.json")
-
-	controller := NewController(slog.Default(), newMockTransport())
-	session := NewSession(slog.Default(), controller, &config.Options{})
-	session.RegisterHandlers()
-
-	staleMethods := []string{
-		"item/permissions/requestApproval",
-		"mcpServer/elicitation/request",
-	}
-
-	for _, method := range staleMethods {
-		require.NotContains(t, serverRequestJSON, `"`+method+`"`,
-			"current codex schema unexpectedly contains %s; update this proof test", method)
-
-		subtype := requestMethodToSubtype(method)
-		found := false
-		for registered := range controller.handlers {
-			if registered == subtype {
-				found = true
-				break
-			}
-		}
-
-		require.False(t, found,
-			"stale handler %q should not remain registered when the current codex schema no longer exposes that request", subtype)
-	}
-
-	// Guard against accidental whitespace-only schema reads.
-	require.NotEmpty(t, strings.TrimSpace(serverRequestJSON))
 }

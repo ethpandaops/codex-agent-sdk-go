@@ -1,10 +1,12 @@
 package message
 
 import (
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -230,6 +232,29 @@ func TestParseCodexAgentMessageDeltaSuppression(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseCodexReasoningItemWithText(t *testing.T) {
+	logger := slog.Default()
+
+	msg, err := Parse(logger, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"type": "reasoning",
+			"id":   "reason_1",
+			"text": "Let me think about this problem step by step.",
+		},
+	})
+	require.NoError(t, err)
+
+	assistant, ok := msg.(*AssistantMessage)
+	require.True(t, ok, "reasoning item with text should produce AssistantMessage")
+	require.Len(t, assistant.Content, 1)
+
+	thinking, ok := assistant.Content[0].(*ThinkingBlock)
+	require.True(t, ok, "expected ThinkingBlock")
+	require.Equal(t, BlockTypeThinking, thinking.Type)
+	require.Equal(t, "Let me think about this problem step by step.", thinking.Thinking)
 }
 
 func TestParseCodexDynamicToolCall(t *testing.T) {
@@ -820,4 +845,220 @@ func TestCodexUsage_ReasoningOutputTokens(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, result.Usage)
 	require.Equal(t, 75, result.Usage.ReasoningOutputTokens)
+}
+
+func TestParse_AttachesAuditEnvelope_AssistantMessage(t *testing.T) {
+	logger := slog.Default()
+
+	data := map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"content": []any{
+				map[string]any{"type": "text", "text": "hello"},
+			},
+			"model": "codex-mini-latest",
+		},
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err)
+
+	am, ok := msg.(*AssistantMessage)
+	require.True(t, ok)
+	require.NotNil(t, am.Audit)
+	assert.Equal(t, "assistant", am.Audit.EventType)
+	assert.NotNil(t, am.Audit.Payload)
+
+	var payload map[string]any
+
+	err = json.Unmarshal(am.Audit.Payload, &payload)
+	require.NoError(t, err)
+	assert.Equal(t, "assistant", payload["type"])
+}
+
+func TestParse_AttachesAuditEnvelope_SystemMessage(t *testing.T) {
+	logger := slog.Default()
+
+	data := map[string]any{
+		"type":    "system",
+		"subtype": "task.started",
+		"data":    map[string]any{"turn_id": "turn-1"},
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err)
+
+	sm, ok := msg.(*TaskStartedMessage)
+	require.True(t, ok)
+	require.NotNil(t, sm.Audit)
+	assert.Equal(t, "system", sm.Audit.EventType)
+	assert.Equal(t, "task.started", sm.Audit.Subtype)
+}
+
+func TestParse_AttachesAuditEnvelope_ResultMessage(t *testing.T) {
+	logger := slog.Default()
+
+	data := map[string]any{
+		"type":       "result",
+		"subtype":    "success",
+		"is_error":   false,
+		"session_id": "sess-1",
+		"result":     "done",
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err)
+
+	rm, ok := msg.(*ResultMessage)
+	require.True(t, ok)
+	require.NotNil(t, rm.Audit)
+	assert.Equal(t, "result", rm.Audit.EventType)
+	assert.Equal(t, "success", rm.Audit.Subtype)
+}
+
+func TestParse_AuditPayloadPreservesRawWireData(t *testing.T) {
+	logger := slog.Default()
+
+	data := map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"content": []any{},
+			"model":   "test-model",
+		},
+		"custom_field": "preserved",
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err)
+
+	am, ok := msg.(*AssistantMessage)
+	require.True(t, ok)
+	require.NotNil(t, am.Audit)
+
+	var payload map[string]any
+
+	err = json.Unmarshal(am.Audit.Payload, &payload)
+	require.NoError(t, err)
+	assert.Equal(t, "preserved", payload["custom_field"])
+}
+
+func TestParse_AuditPayloadPreservesOriginalJSONBytes(t *testing.T) {
+	logger := slog.Default()
+	raw := []byte("{\n  \"type\": \"assistant\",\n  \"message\": {\n    \"content\": [],\n    \"model\": \"test-model\"\n  },\n  \"provider_trace\": 1e+06,\n  \"provider_trace\": 1000000\n}")
+
+	msg, err := Parse(logger, raw)
+	require.NoError(t, err)
+
+	am, ok := msg.(*AssistantMessage)
+	require.True(t, ok)
+	require.NotNil(t, am.Audit)
+	assert.Equal(t, string(raw), string(am.Audit.Payload))
+}
+
+func TestNewAuditEnvelope_PublicConstructor(t *testing.T) {
+	type testPayload struct {
+		Key string `json:"key"`
+	}
+
+	env, err := NewAuditEnvelope("test_event", "test_sub", testPayload{Key: "val"})
+	require.NoError(t, err)
+	require.NotNil(t, env)
+	assert.Equal(t, "test_event", env.EventType)
+	assert.Equal(t, "test_sub", env.Subtype)
+
+	var payload map[string]any
+
+	err = json.Unmarshal(env.Payload, &payload)
+	require.NoError(t, err)
+	assert.Equal(t, "val", payload["key"])
+}
+
+func TestNewAuditEnvelope_MarshalError(t *testing.T) {
+	env, err := NewAuditEnvelope("event", "sub", make(chan int))
+	assert.Error(t, err)
+	assert.Nil(t, env)
+}
+
+func TestParseResultMessage_DirectFields(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.Default()
+	stopReason := "end_turn"
+	cost := 0.0042
+
+	data := map[string]any{
+		"type":           "result",
+		"subtype":        "success",
+		"is_error":       false,
+		"session_id":     "sess-123",
+		"stop_reason":    stopReason,
+		"duration_ms":    float64(1500),
+		"num_turns":      float64(3),
+		"total_cost_usd": cost,
+		"result":         "hello",
+		"usage": map[string]any{
+			"input_tokens":  float64(100),
+			"output_tokens": float64(50),
+		},
+	}
+
+	msg, err := Parse(logger, data)
+	require.NoError(t, err)
+
+	rm, ok := msg.(*ResultMessage)
+	require.True(t, ok)
+
+	assert.Equal(t, "sess-123", rm.SessionID)
+	require.NotNil(t, rm.StopReason)
+	assert.Equal(t, "end_turn", *rm.StopReason)
+	assert.Equal(t, 1500, rm.DurationMs)
+	assert.Equal(t, 3, rm.NumTurns)
+	require.NotNil(t, rm.TotalCostUSD)
+	assert.InDelta(t, cost, *rm.TotalCostUSD, 1e-9)
+}
+
+func TestParseCodexTurnCompleted_DirectFields(t *testing.T) {
+	t.Parallel()
+
+	cost := 0.125
+
+	data := map[string]any{
+		"type":           "response.completed",
+		"stop_reason":    "end_turn",
+		"duration_ms":    float64(2500),
+		"num_turns":      float64(7),
+		"total_cost_usd": cost,
+		"usage": map[string]any{
+			"input_tokens":            float64(200),
+			"output_tokens":           float64(100),
+			"cached_input_tokens":     float64(50),
+			"reasoning_output_tokens": float64(25),
+		},
+	}
+
+	msg, err := parseCodexTurnCompleted(data)
+	require.NoError(t, err)
+
+	require.NotNil(t, msg.StopReason)
+	assert.Equal(t, "end_turn", *msg.StopReason)
+	assert.Equal(t, 2500, msg.DurationMs)
+	assert.Equal(t, 7, msg.NumTurns)
+	require.NotNil(t, msg.TotalCostUSD)
+	assert.InDelta(t, cost, *msg.TotalCostUSD, 1e-9)
+}
+
+func TestParseCodexTurnCompleted_MissingOptionalFields(t *testing.T) {
+	t.Parallel()
+
+	data := map[string]any{
+		"type": "response.completed",
+	}
+
+	msg, err := parseCodexTurnCompleted(data)
+	require.NoError(t, err)
+
+	assert.Nil(t, msg.StopReason)
+	assert.Equal(t, 0, msg.DurationMs)
+	assert.Equal(t, 0, msg.NumTurns)
+	assert.Nil(t, msg.TotalCostUSD)
 }

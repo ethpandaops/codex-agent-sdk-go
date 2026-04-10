@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
@@ -108,6 +109,10 @@ func BuildExecArgs(prompt string, options *config.Options) []string {
 
 	if options.Model != "" {
 		args = append(args, "-m", options.Model)
+	}
+
+	if options.MaxTurns > 0 {
+		args = append(args, "--max-turns", strconv.Itoa(options.MaxTurns))
 	}
 
 	// Sandbox mode: explicit Sandbox field takes precedence, then map from PermissionMode

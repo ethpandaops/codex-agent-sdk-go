@@ -66,6 +66,13 @@ func WithPermissionMode(mode string) Option {
 	}
 }
 
+// WithMaxTurns sets the maximum number of conversation turns.
+func WithMaxTurns(maxTurns int) Option {
+	return func(o *CodexAgentOptions) {
+		o.MaxTurns = maxTurns
+	}
+}
+
 // WithCwd sets the working directory for the CLI process.
 func WithCwd(cwd string) Option {
 	return func(o *CodexAgentOptions) {
@@ -207,6 +214,18 @@ func WithCanUseTool(callback ToolPermissionCallback) Option {
 func WithOnUserInput(callback UserInputCallback) Option {
 	return func(o *CodexAgentOptions) {
 		o.OnUserInput = callback
+	}
+}
+
+// ===== Elicitation =====
+
+// WithOnElicitation sets a callback for handling MCP elicitation requests.
+// The callback is invoked when an MCP server sends an elicitation/create request
+// through the CLI, allowing the SDK consumer to present forms or collect input.
+// If not set, elicitation requests are auto-declined.
+func WithOnElicitation(callback ElicitationCallback) Option {
+	return func(o *CodexAgentOptions) {
+		o.OnElicitation = callback
 	}
 }
 

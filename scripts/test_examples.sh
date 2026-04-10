@@ -228,10 +228,20 @@ run_example() {
 
 	args="$(example_args "$name")"
 
+	# Examples with their own go.mod are separate modules and must be
+	# built from within their directory.
+	local run_dir="$REPO_ROOT"
+	local run_pkg="./examples/$name"
+
+	if [[ -f "$EXAMPLES_DIR/$name/go.mod" ]]; then
+		run_dir="$EXAMPLES_DIR/$name"
+		run_pkg="."
+	fi
+
 	if [[ -n "$args" ]]; then
-		(cd "$REPO_ROOT" && timeout "$TIMEOUT" go run "./examples/$name" "$args") >"$logfile" 2>&1
+		(cd "$run_dir" && timeout "$TIMEOUT" go run "$run_pkg" "$args") >"$logfile" 2>&1
 	else
-		(cd "$REPO_ROOT" && timeout "$TIMEOUT" go run "./examples/$name") >"$logfile" 2>&1
+		(cd "$run_dir" && timeout "$TIMEOUT" go run "$run_pkg") >"$logfile" 2>&1
 	fi
 }
 

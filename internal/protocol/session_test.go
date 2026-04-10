@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/elicitation"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/permission"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/userinput"
@@ -475,9 +476,10 @@ func TestSession_HandleRequestUserInput_WithCallback(t *testing.T) {
 			"turn_id":   "turn_3",
 			"questions": []any{
 				map[string]any{
-					"id":       "lang",
-					"header":   "Language",
-					"question": "Which language?",
+					"id":           "lang",
+					"header":       "Language",
+					"question":     "Which language?",
+					"multi_select": true,
 					"options": []any{
 						map[string]any{"label": "Go", "description": "Fast compiled"},
 						map[string]any{"label": "Rust", "description": "Memory safe"},
@@ -497,6 +499,7 @@ func TestSession_HandleRequestUserInput_WithCallback(t *testing.T) {
 	require.Equal(t, "lang", captured.Questions[0].ID)
 	require.Equal(t, "Language", captured.Questions[0].Header)
 	require.Equal(t, "Which language?", captured.Questions[0].Question)
+	require.True(t, captured.Questions[0].MultiSelect)
 	require.Len(t, captured.Questions[0].Options, 3)
 	require.Equal(t, "Rust", captured.Questions[0].Options[1].Label)
 
@@ -714,20 +717,23 @@ func TestSession_HandleFileChangeApproval_LegacyApplyPatchUsesWriteForAdds(t *te
 func TestSession_HandlePermissionsApproval_NoCallback(t *testing.T) {
 	session := NewSession(slog.Default(), nil, &config.Options{})
 
+	reqPerms := map[string]any{
+		"fileSystem": map[string]any{"write": []any{"/tmp"}},
+	}
+
 	resp, err := session.HandlePermissionsApproval(context.Background(), &ControlRequest{
 		Request: map[string]any{
-			"subtype":  "item_permissions/requestApproval",
-			"itemId":   "item_1",
-			"threadId": "thread_1",
-			"turnId":   "turn_1",
-			"permissions": map[string]any{
-				"fileSystem": map[string]any{"write": []any{"/tmp"}},
-			},
+			"subtype":     "item_permissions/requestApproval",
+			"itemId":      "item_1",
+			"threadId":    "thread_1",
+			"turnId":      "turn_1",
+			"permissions": reqPerms,
 		},
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, "accept", resp["decision"])
+	require.Equal(t, reqPerms, resp["permissions"])
+	require.Equal(t, "turn", resp["scope"])
 }
 
 func TestSession_HandlePermissionsApproval_WithCallback(t *testing.T) {
@@ -747,21 +753,24 @@ func TestSession_HandlePermissionsApproval_WithCallback(t *testing.T) {
 
 	session := NewSession(slog.Default(), nil, opts)
 
+	reqPerms := map[string]any{
+		"network": map[string]any{"enabled": true},
+	}
+
 	resp, err := session.HandlePermissionsApproval(context.Background(), &ControlRequest{
 		Request: map[string]any{
-			"subtype":  "item_permissions/requestApproval",
-			"itemId":   "item_1",
-			"threadId": "thread_1",
-			"turnId":   "turn_1",
-			"permissions": map[string]any{
-				"network": map[string]any{"enabled": true},
-			},
-			"reason": "need network",
+			"subtype":     "item_permissions/requestApproval",
+			"itemId":      "item_1",
+			"threadId":    "thread_1",
+			"turnId":      "turn_1",
+			"permissions": reqPerms,
+			"reason":      "need network",
 		},
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, "accept", resp["decision"])
+	require.Equal(t, reqPerms, resp["permissions"])
+	require.Equal(t, "turn", resp["scope"])
 	require.Equal(t, "Permissions", capturedTool)
 	require.NotNil(t, capturedInput["permissions"])
 	require.Equal(t, "need network", capturedInput["reason"])
@@ -775,20 +784,23 @@ func TestSession_HandlePermissionsApproval_AllowedWritePolicyBypassesFilter(t *t
 
 	session := NewSession(slog.Default(), nil, opts)
 
+	reqPerms := map[string]any{
+		"fileSystem": map[string]any{"write": []any{"/tmp"}},
+	}
+
 	resp, err := session.HandlePermissionsApproval(context.Background(), &ControlRequest{
 		Request: map[string]any{
-			"subtype": "item_permissions/requestApproval",
-			"permissions": map[string]any{
-				"fileSystem": map[string]any{"write": []any{"/tmp"}},
-			},
+			"subtype":     "item_permissions/requestApproval",
+			"permissions": reqPerms,
 		},
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, "accept", resp["decision"])
+	require.Equal(t, reqPerms, resp["permissions"])
+	require.Equal(t, "turn", resp["scope"])
 }
 
-func TestSession_HandleMCPElicitation(t *testing.T) {
+func TestSession_HandleMCPElicitation_NoCallback(t *testing.T) {
 	session := NewSession(slog.Default(), nil, &config.Options{})
 
 	resp, err := session.HandleMCPElicitation(context.Background(), &ControlRequest{
@@ -798,7 +810,115 @@ func TestSession_HandleMCPElicitation(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+	require.Equal(t, "decline", resp["action"])
+}
+
+func TestSession_HandleMCPElicitation_WithCallback(t *testing.T) {
+	var capturedReq *elicitation.Request
+
+	opts := &config.Options{
+		OnElicitation: func(_ context.Context, req *elicitation.Request) (*elicitation.Response, error) {
+			capturedReq = req
+
+			return &elicitation.Response{
+				Action:  elicitation.ActionAccept,
+				Content: map[string]any{"name": "test-value"},
+			}, nil
+		},
+	}
+
+	session := NewSession(slog.Default(), nil, opts)
+
+	resp, err := session.HandleMCPElicitation(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype":    "mcpServer_elicitation/request",
+			"serverName": "my-mcp-server",
+			"message":    "Please provide credentials",
+			"mode":       "form",
+			"threadId":   "thread-1",
+			"turnId":     "turn-1",
+			"requestedSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string"},
+				},
+			},
+		},
+	})
+
+	require.NoError(t, err)
 	require.Equal(t, "accept", resp["action"])
+	require.Equal(t, map[string]any{"name": "test-value"}, resp["content"])
+
+	require.NotNil(t, capturedReq)
+	require.Equal(t, "my-mcp-server", capturedReq.MCPServerName)
+	require.Equal(t, "Please provide credentials", capturedReq.Message)
+	require.Equal(t, "thread-1", capturedReq.ThreadID)
+
+	require.NotNil(t, capturedReq.Mode)
+	require.Equal(t, elicitation.ModeForm, *capturedReq.Mode)
+
+	require.NotNil(t, capturedReq.TurnID)
+	require.Equal(t, "turn-1", *capturedReq.TurnID)
+
+	require.NotNil(t, capturedReq.RequestedSchema)
+	require.Equal(t, "object", capturedReq.RequestedSchema["type"])
+
+	require.NotNil(t, capturedReq.Audit)
+}
+
+func TestSession_HandleMCPElicitation_URLMode(t *testing.T) {
+	opts := &config.Options{
+		OnElicitation: func(_ context.Context, req *elicitation.Request) (*elicitation.Response, error) {
+			require.NotNil(t, req.Mode)
+			require.Equal(t, elicitation.ModeURL, *req.Mode)
+			require.NotNil(t, req.URL)
+			require.Equal(t, "https://example.com/auth", *req.URL)
+			require.NotNil(t, req.ElicitationID)
+			require.Equal(t, "elicit-123", *req.ElicitationID)
+
+			return &elicitation.Response{Action: elicitation.ActionCancel}, nil
+		},
+	}
+
+	session := NewSession(slog.Default(), nil, opts)
+
+	resp, err := session.HandleMCPElicitation(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype":       "mcpServer_elicitation/request",
+			"serverName":    "auth-server",
+			"message":       "Please authenticate",
+			"mode":          "url",
+			"url":           "https://example.com/auth",
+			"elicitationId": "elicit-123",
+			"threadId":      "thread-2",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "cancel", resp["action"])
+}
+
+func TestSession_HandleMCPElicitation_NilResponse(t *testing.T) {
+	opts := &config.Options{
+		OnElicitation: func(_ context.Context, _ *elicitation.Request) (*elicitation.Response, error) {
+			return &elicitation.Response{Action: elicitation.ActionDecline}, nil
+		},
+	}
+
+	session := NewSession(slog.Default(), nil, opts)
+
+	resp, err := session.HandleMCPElicitation(context.Background(), &ControlRequest{
+		Request: map[string]any{
+			"subtype":    "mcpServer_elicitation/request",
+			"serverName": "test-server",
+			"message":    "test",
+			"threadId":   "thread-1",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "decline", resp["action"])
 }
 
 func TestSession_HandleCanUseTool_LegacyExecCommandApprovalArray(t *testing.T) {

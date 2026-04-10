@@ -24,11 +24,26 @@ func displayMessage(msg codexsdk.Message) {
 				fmt.Printf("Codex: %s\n", b.Text)
 			}
 		}
-	case *codexsdk.SystemMessage:
-		if (m.Subtype == "item/reasoning/summaryPartAdded" || m.Subtype == "item/reasoning/summaryTextDelta") && m.Data != nil {
-			if text, ok := m.Data["text"].(string); ok && text != "" {
-				fmt.Printf("[Reasoning Summary] %s\n", text)
-			}
+	case *codexsdk.StreamEvent:
+		event := m.Event
+
+		eventType, _ := event["type"].(string)
+		if eventType != "content_block_delta" {
+			return
+		}
+
+		delta, ok := event["delta"].(map[string]any)
+		if !ok {
+			return
+		}
+
+		switch delta["type"] {
+		case "thinking_delta":
+			thinking, _ := delta["thinking"].(string)
+			fmt.Print(thinking)
+		case "text_delta":
+			text, _ := delta["text"].(string)
+			fmt.Print(text)
 		}
 	case *codexsdk.ResultMessage:
 		if m.Result != nil && *m.Result != "" {
@@ -94,6 +109,7 @@ func runEffortExample(title string, effort codexsdk.Effort, prompt string, extra
 func runStreamingEffortExample() {
 	fmt.Println("=== Streaming Reasoning Example ===")
 	fmt.Println("Streams response events while using high reasoning effort.")
+	fmt.Println("Thinking deltas appear as [thinking_delta] stream events.")
 	fmt.Println()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -110,6 +126,7 @@ func runStreamingEffortExample() {
 	if err := client.Start(ctx,
 		codexsdk.WithLogger(logger),
 		codexsdk.WithEffort(codexsdk.EffortHigh),
+		codexsdk.WithIncludePartialMessages(true),
 	); err != nil {
 		fmt.Printf("Failed to connect: %v\n", err)
 
