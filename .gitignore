@@ -43,8 +43,8 @@ hello.txt
 hello.go
 memories/
 cancellation_demo.txt
-developer_instructions
+/developer_instructions
 /extended_thinking
 graceful_shutdown_demo.txt
-personality
-service_tier
+/personality
+/service_tier
