@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
@@ -65,8 +66,18 @@ func serializeMCPServerConfigArgs(servers map[string]mcp.ServerConfig) []string 
 			args = append(args, "-c", fmt.Sprintf("%s.type=stdio", prefix))
 			args = append(args, "-c", fmt.Sprintf("%s.command=%s", prefix, c.Command))
 
-			for _, arg := range c.Args {
-				args = append(args, "-c", fmt.Sprintf("%s.args=%s", prefix, arg))
+			// Args must be emitted as a single TOML inline array override.
+			// Repeated scalar `-c key=val` overrides replace (not append) at
+			// the same dotted path, which would leave `args` as a string and
+			// fail codex config validation (`expected a sequence`).
+			if len(c.Args) > 0 {
+				quoted := make([]string, len(c.Args))
+				for i, a := range c.Args {
+					quoted[i] = strconv.Quote(a)
+				}
+
+				args = append(args, "-c",
+					fmt.Sprintf("%s.args=[%s]", prefix, strings.Join(quoted, ",")))
 			}
 
 			envKeys := make([]string, 0, len(c.Env))
