@@ -18,6 +18,7 @@ import (
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/model"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/observability"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/protocol"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/subprocess"
 )
@@ -39,6 +40,7 @@ type Client struct {
 	controller *protocol.Controller
 	session    *protocol.Session
 	options    *config.Options
+	recorder   *observability.Recorder
 
 	messages chan message.Message
 
@@ -111,6 +113,7 @@ func (c *Client) initializeCore(ctx context.Context, options *config.Options) er
 	}
 
 	c.options = options
+	c.recorder = observability.NewRecorder(options.MeterProvider, options.TracerProvider)
 
 	var transport config.Transport
 
@@ -349,6 +352,7 @@ func (c *Client) readLoop(ctx context.Context) error {
 
 			if err != nil {
 				c.log.Warn("failed to parse message", "error", err)
+				c.recorder.RecordMessageParseError(ctx)
 				c.setFatalError(fmt.Errorf("parse message: %w", err))
 
 				return fmt.Errorf("parse message: %w", err)

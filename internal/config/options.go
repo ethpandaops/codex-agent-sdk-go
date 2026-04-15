@@ -5,6 +5,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/elicitation"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/hook"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
@@ -209,4 +213,20 @@ type Options struct {
 	// CodexHome overrides the Codex home directory (default ~/.codex).
 	// Used by StatSession to locate the session database.
 	CodexHome string
+
+	// ===== Observability =====
+
+	// MeterProvider is the OTel meter provider for recording SDK metrics.
+	// When nil, all metric recording is noop (zero-cost).
+	MeterProvider metric.MeterProvider
+
+	// TracerProvider is the OTel tracer provider for recording SDK spans.
+	// When nil, all trace recording is noop (zero-cost).
+	TracerProvider trace.TracerProvider
+
+	// PrometheusRegisterer provides a Prometheus registerer for SDK metrics.
+	// This is sugar: when set and MeterProvider is nil, an OTel MeterProvider
+	// is created automatically from the registerer via the OTel→Prometheus bridge.
+	// If MeterProvider is also set, MeterProvider takes precedence.
+	PrometheusRegisterer prometheus.Registerer
 }

@@ -12,10 +12,13 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/elicitation"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/observability"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/permission"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/schema"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/userinput"
@@ -31,6 +34,7 @@ type Session struct {
 	log        *slog.Logger
 	controller *Controller
 	options    *config.Options
+	recorder   *observability.Recorder
 
 	sdkMcpServers   map[string]mcp.ServerInstance
 	sdkDynamicTools map[string]*config.DynamicTool
@@ -49,6 +53,7 @@ func NewSession(
 		log:             log.With("component", "session"),
 		controller:      controller,
 		options:         options,
+		recorder:        observability.NewRecorder(options.MeterProvider, options.TracerProvider),
 		sdkMcpServers:   make(map[string]mcp.ServerInstance, 4),
 		sdkDynamicTools: make(map[string]*config.DynamicTool, 4),
 	}
@@ -474,14 +479,31 @@ func (s *Session) HandleDynamicToolCall(
 	toolFullName, _ := req.Request["tool"].(string)
 	arguments, _ := req.Request["arguments"].(map[string]any)
 
+	callStart := time.Now()
+
+	var toolSpan trace.Span
+
+	ctx, toolSpan = s.recorder.StartToolCallSpan(ctx, toolFullName)
+
 	// Try plain name lookup in dynamic tools first.
 	if tool, ok := s.sdkDynamicTools[toolFullName]; ok {
-		return s.executeDynamicTool(ctx, tool, arguments)
+		result, err := s.executeDynamicTool(ctx, tool, arguments)
+
+		outcome := "success"
+		if err != nil || (result != nil && result["success"] == false) {
+			outcome = "error"
+		}
+
+		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcome, time.Since(callStart))
+
+		return result, err
 	}
 
 	// Fall back to MCP server lookup for mcp__<server>__<tool> names.
 	serverName, toolName, err := parseMCPToolName(toolFullName)
 	if err != nil {
+		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, "error", time.Since(callStart))
+
 		//nolint:nilerr // Error is encoded in the protocol response
 		return map[string]any{
 			"success": false,
@@ -494,6 +516,8 @@ func (s *Session) HandleDynamicToolCall(
 
 	server, exists := s.sdkMcpServers[serverName]
 	if !exists {
+		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, "error", time.Since(callStart))
+
 		return map[string]any{
 			"success": false,
 			"contentItems": []map[string]any{{
@@ -505,6 +529,8 @@ func (s *Session) HandleDynamicToolCall(
 
 	result, callErr := server.CallTool(ctx, toolName, arguments)
 	if callErr != nil {
+		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, "error", time.Since(callStart))
+
 		//nolint:nilerr // Error is encoded in the protocol response
 		return map[string]any{
 			"success": false,
@@ -516,6 +542,13 @@ func (s *Session) HandleDynamicToolCall(
 	}
 
 	isError, _ := result["is_error"].(bool)
+
+	outcome := "success"
+	if isError {
+		outcome = "error"
+	}
+
+	s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcome, time.Since(callStart))
 
 	contentItems := convertMCPContentToItems(result)
 

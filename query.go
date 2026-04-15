@@ -13,11 +13,13 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	sdkerrors "github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/observability"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/protocol"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/subprocess"
 )
@@ -125,6 +127,12 @@ func validateAndConfigureOptions(options *CodexAgentOptions) error {
 	return config.ConfigureToolPermissionPolicy(options)
 }
 
+// newRecorder creates an observability Recorder from the given options.
+// Returns a noop recorder when no providers are configured.
+func newRecorder(options *CodexAgentOptions) *observability.Recorder {
+	return observability.NewRecorder(options.MeterProvider, options.TracerProvider)
+}
+
 // Query executes a one-shot query to the Codex CLI and returns an iterator of messages.
 //
 // By default, logging is disabled. Use WithLogger to enable logging:
@@ -171,6 +179,19 @@ func Query(
 
 		log = log.With("component", "query")
 		log.Debug("starting query execution")
+
+		recorder := newRecorder(options)
+		queryStart := time.Now()
+
+		var querySpan trace.Span
+
+		ctx, querySpan = recorder.StartQuerySpan(ctx, "query", options.Model)
+
+		var queryErr error
+
+		defer func() {
+			recorder.EndQuerySpan(ctx, querySpan, options.Model, time.Since(queryStart), queryErr)
+		}()
 
 		var transport config.Transport
 
@@ -308,8 +329,10 @@ func Query(
 
 				if err != nil {
 					log.Warn("failed to parse message", "error", err)
+					recorder.RecordMessageParseError(ctx)
 
-					if !yield(nil, fmt.Errorf("parse message: %w", err)) {
+					queryErr = fmt.Errorf("parse message: %w", err)
+					if !yield(nil, queryErr) {
 						return
 					}
 
@@ -325,6 +348,13 @@ func Query(
 				if resultMsg, ok := parsed.(*message.ResultMessage); ok {
 					if resultMsg.SessionID == "" && sessionID != "" {
 						resultMsg.SessionID = sessionID
+					}
+
+					if resultMsg.Usage != nil {
+						recorder.RecordTokenUsage(ctx, options.Model,
+							int64(resultMsg.Usage.InputTokens),
+							int64(resultMsg.Usage.OutputTokens),
+						)
 					}
 				}
 
@@ -345,6 +375,8 @@ func Query(
 
 				if err := controller.FatalError(); err != nil {
 					log.Error("error from transport", "error", err)
+					queryErr = err
+
 					yield(nil, err)
 				}
 
@@ -352,6 +384,9 @@ func Query(
 
 			case <-ctx.Done():
 				log.Debug("context cancelled")
+
+				queryErr = ctx.Err()
+
 				yield(nil, ctx.Err())
 
 				return
@@ -462,9 +497,24 @@ func QueryStream(
 		log := getLoggerWithComponent(options, "query_stream")
 		log.Debug("starting streaming query execution")
 
+		recorder := newRecorder(options)
+		queryStart := time.Now()
+
+		var querySpan trace.Span
+
+		ctx, querySpan = recorder.StartQuerySpan(ctx, "query_stream", options.Model)
+
+		var queryErr error
+
+		defer func() {
+			recorder.EndQuerySpan(ctx, querySpan, options.Model, time.Since(queryStart), queryErr)
+		}()
+
 		// QueryStream uses app-server semantics unless a custom transport is injected.
 		if options.Transport == nil {
 			if err := config.ValidateOptionsForBackend(options, config.QueryBackendAppServer); err != nil {
+				queryErr = err
+
 				yield(nil, err)
 
 				return
@@ -477,6 +527,9 @@ func QueryStream(
 
 		if err := transport.Start(ctx); err != nil {
 			log.Error("failed to start CLI", "error", err)
+
+			queryErr = err
+
 			yield(nil, err)
 
 			return
@@ -492,7 +545,9 @@ func QueryStream(
 
 		controller := protocol.NewController(log, transport)
 		if err := controller.Start(ctx); err != nil {
-			yield(nil, fmt.Errorf("start protocol controller: %w", err))
+			queryErr = fmt.Errorf("start protocol controller: %w", err)
+
+			yield(nil, queryErr)
 
 			return
 		}
@@ -507,7 +562,9 @@ func QueryStream(
 		log.Debug("initializing session for streaming mode")
 
 		if err := session.Initialize(ctx); err != nil {
-			yield(nil, fmt.Errorf("initialize session: %w", err))
+			queryErr = fmt.Errorf("initialize session: %w", err)
+
+			yield(nil, queryErr)
 
 			return
 		}
@@ -566,6 +623,9 @@ func QueryStream(
 
 					if err := controller.FatalError(); err != nil {
 						log.Error("error from transport", "error", err)
+
+						queryErr = err
+
 						yield(nil, err)
 					}
 
@@ -579,8 +639,10 @@ func QueryStream(
 
 				if err != nil {
 					log.Warn("failed to parse message", "error", err)
+					recorder.RecordMessageParseError(ctx)
 
-					if !yield(nil, fmt.Errorf("parse message: %w", err)) {
+					queryErr = fmt.Errorf("parse message: %w", err)
+					if !yield(nil, queryErr) {
 						return
 					}
 
@@ -590,6 +652,15 @@ func QueryStream(
 				if hasMCPOrHooks {
 					if _, isResult := parsed.(*message.ResultMessage); isResult {
 						closeResult()
+					}
+				}
+
+				if resultMsg, ok := parsed.(*message.ResultMessage); ok {
+					if resultMsg.Usage != nil {
+						recorder.RecordTokenUsage(ctx, options.Model,
+							int64(resultMsg.Usage.InputTokens),
+							int64(resultMsg.Usage.OutputTokens),
+						)
 					}
 				}
 
@@ -613,6 +684,9 @@ func QueryStream(
 
 				if err := controller.FatalError(); err != nil {
 					log.Error("error from transport", "error", err)
+
+					queryErr = err
+
 					yield(nil, err)
 				}
 
@@ -620,6 +694,9 @@ func QueryStream(
 
 			case <-ctx.Done():
 				log.Debug("context cancelled")
+
+				queryErr = ctx.Err()
+
 				yield(nil, ctx.Err())
 
 				return

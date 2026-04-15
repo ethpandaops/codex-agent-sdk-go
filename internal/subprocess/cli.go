@@ -18,6 +18,7 @@ import (
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/observability"
 )
 
 const (
@@ -41,6 +42,7 @@ type CLITransport struct {
 	stdout         io.ReadCloser
 	stderr         io.ReadCloser
 	stderrCallback func(string)
+	recorder       *observability.Recorder
 	mu             sync.Mutex
 	isStreaming    bool
 	closing        bool
@@ -77,6 +79,7 @@ func NewCLITransportWithMode(
 		options:        options,
 		prompt:         prompt,
 		stderrCallback: options.Stderr,
+		recorder:       observability.NewRecorder(options.MeterProvider, options.TracerProvider),
 		isStreaming:    isStreaming,
 		closeCh:        make(chan struct{}),
 	}
@@ -262,6 +265,7 @@ func (t *CLITransport) ReadMessages(
 
 			if err := json.Unmarshal(line, &msg); err != nil {
 				t.log.Debug("Failed to unmarshal JSON message", "error", err, "message", string(line))
+				t.recorder.RecordMessageParseError(ctx)
 
 				errs <- &errors.CLIJSONDecodeError{
 					RawData: string(line),
@@ -325,6 +329,7 @@ func (t *CLITransport) ReadMessages(
 			}
 
 			t.log.Error("CLI process exited with error", "exit_code", exitCode, "stderr", stderrOutput)
+			t.recorder.RecordCLIProcessRestart(ctx)
 
 			errs <- &errors.ProcessError{
 				ExitCode: exitCode,
