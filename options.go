@@ -367,8 +367,22 @@ func WithSkipVersionCheck(skip bool) Option {
 // WithIncludePartialMessages controls whether streaming deltas are emitted as
 // StreamEvent messages. When false (default), only completed AssistantMessage
 // and ResultMessage are emitted. When true, token-by-token deltas are emitted
-// as StreamEvent with content_block_delta/text_delta shape, followed by the
-// completed AssistantMessage.
+// as StreamEvent with content_block_delta shape, followed by the completed
+// AssistantMessage.
+//
+// Each StreamEvent's event.delta carries a "type" field that identifies the
+// source of the chunk so consumers can route it appropriately:
+//
+//   - text_delta            — assistant prose (delta.text)
+//   - thinking_delta        — model reasoning content (delta.thinking)
+//   - command_output_delta  — shell stdout/stderr from a command_execution item
+//     (delta.text; delta.item_id correlates back to the ToolUseBlock)
+//   - file_change_delta     — diff output from a file_change item
+//     (delta.text; delta.item_id correlates back to the ToolUseBlock)
+//
+// Consumers that render assistant prose should match on text_delta only and
+// route command_output_delta / file_change_delta into the ToolUseBlock view
+// rather than the assistant text stream.
 func WithIncludePartialMessages(include bool) Option {
 	return func(o *CodexAgentOptions) {
 		o.IncludePartialMessages = include

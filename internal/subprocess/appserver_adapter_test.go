@@ -2800,6 +2800,149 @@ func TestAppServerAdapter_ReasoningDeltaAccumulation_SummaryTakesPrecedence(t *t
 	}
 }
 
+func TestAppServerAdapter_CommandOutputDeltaEmission(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.includePartialMessages = true
+	adapter.threadID = testThreadID
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/commandExecution/outputDelta",
+		Params:  json.RawMessage(`{"delta":"< HTTP/2.0 200 OK\n","itemId":"call_42","threadId":"` + testThreadID + `"}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		require.Equal(t, "stream_event", msg["type"])
+		require.Equal(t, "call_42", msg["uuid"])
+		require.Equal(t, testThreadID, msg["session_id"])
+
+		event, ok := msg["event"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "content_block_delta", event["type"])
+
+		delta, ok := event["delta"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "command_output_delta", delta["type"],
+			"shell stdout/stderr deltas must use command_output_delta to distinguish from assistant prose")
+		require.Equal(t, "< HTTP/2.0 200 OK\n", delta["text"])
+		require.Equal(t, "call_42", delta["item_id"],
+			"command_output_delta must carry item_id so consumers can correlate with the ToolUseBlock")
+	case <-time.After(time.Second):
+		t.Fatal("expected stream_event message from command output delta")
+	}
+}
+
+func TestAppServerAdapter_FileChangeDeltaEmission(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.includePartialMessages = true
+	adapter.threadID = testThreadID
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/fileChange/outputDelta",
+		Params:  json.RawMessage(`{"delta":"+ added line\n","itemId":"call_diff","threadId":"` + testThreadID + `"}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		require.Equal(t, "stream_event", msg["type"])
+		require.Equal(t, "call_diff", msg["uuid"])
+
+		event, ok := msg["event"].(map[string]any)
+		require.True(t, ok)
+
+		delta, ok := event["delta"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "file_change_delta", delta["type"],
+			"file change diff deltas must use file_change_delta to distinguish from assistant prose")
+		require.Equal(t, "+ added line\n", delta["text"])
+		require.Equal(t, "call_diff", delta["item_id"])
+	case <-time.After(time.Second):
+		t.Fatal("expected stream_event message from file change delta")
+	}
+}
+
+func TestAppServerAdapter_OutputDeltas_SuppressedWhenDisabled(t *testing.T) {
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	// includePartialMessages defaults to false in newTestAdapter, so neither
+	// command output nor file change deltas should reach consumers.
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/commandExecution/outputDelta",
+		Params:  json.RawMessage(`{"delta":"output","itemId":"call_x"}`),
+	}
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/fileChange/outputDelta",
+		Params:  json.RawMessage(`{"delta":"diff","itemId":"call_y"}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		t.Fatalf("expected output deltas to be suppressed, got: %v", msg)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: both deltas suppressed.
+	}
+}
+
+func TestAppServerAdapter_PlanDeltaEmission(t *testing.T) {
+	// item/plan/delta intentionally still uses text_delta. Plans are prose,
+	// so consumers can render them as assistant text without ambiguity.
+	mock := newMockAppServerRPC()
+	adapter := newTestAdapter(mock)
+	adapter.includePartialMessages = true
+	adapter.threadID = testThreadID
+
+	defer func() {
+		close(adapter.done)
+		mock.Close()
+		adapter.wg.Wait()
+	}()
+
+	mock.notifyCh <- &RPCNotification{
+		JSONRPC: "2.0",
+		Method:  "item/plan/delta",
+		Params:  json.RawMessage(`{"delta":"step 1","itemId":"plan_1","threadId":"` + testThreadID + `"}`),
+	}
+
+	select {
+	case msg := <-adapter.messages:
+		event, ok := msg["event"].(map[string]any)
+		require.True(t, ok)
+
+		delta, ok := event["delta"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "text_delta", delta["type"])
+		require.Equal(t, "step 1", delta["text"])
+	case <-time.After(time.Second):
+		t.Fatal("expected stream_event from plan delta")
+	}
+}
+
 func TestAppServerAdapter_UnknownNotification_PassThrough(t *testing.T) {
 	mock := newMockAppServerRPC()
 	adapter := newTestAdapter(mock)
