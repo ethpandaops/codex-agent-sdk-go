@@ -1635,10 +1635,10 @@ func (a *AppServerAdapter) translateNotification(
 		return a.translateThinkingDeltaNotification(params)
 
 	case "item/commandExecution/outputDelta":
-		return a.translateTextDeltaNotification(params)
+		return a.translateOutputDeltaNotification(params, "command_output_delta")
 
 	case "item/fileChange/outputDelta":
-		return a.translateTextDeltaNotification(params)
+		return a.translateOutputDeltaNotification(params, "file_change_delta")
 
 	case "item/plan/delta":
 		return a.translateTextDeltaNotification(params)
@@ -1903,6 +1903,51 @@ func (a *AppServerAdapter) accumulateReasoningDelta(params map[string]any) {
 
 	buf.WriteString(delta)
 	a.mu.Unlock()
+}
+
+// translateOutputDeltaNotification converts a non-prose delta notification
+// (shell command output, file diff output, etc.) into a stream_event with a
+// dedicated delta.type so consumers can distinguish tool output from regular
+// assistant text. The originating itemId is included inside the delta payload
+// so a consumer can correlate the chunk back to the ToolUseBlock emitted at
+// item.started.
+func (a *AppServerAdapter) translateOutputDeltaNotification(
+	params map[string]any,
+	deltaType string,
+) map[string]any {
+	if !a.includePartialMessages {
+		return nil
+	}
+
+	delta, _ := params["delta"].(string)
+	itemID, _ := params["itemId"].(string)
+
+	a.mu.Lock()
+	sessionID := a.threadID
+	a.mu.Unlock()
+
+	if threadID, ok := params["threadId"].(string); ok && threadID != "" {
+		sessionID = threadID
+	}
+
+	deltaPayload := map[string]any{
+		"type": deltaType,
+		"text": delta,
+	}
+	if itemID != "" {
+		deltaPayload["item_id"] = itemID
+	}
+
+	return map[string]any{
+		"type":       "stream_event",
+		"uuid":       itemID,
+		"session_id": sessionID,
+		"event": map[string]any{
+			"type":  "content_block_delta",
+			"index": 0,
+			"delta": deltaPayload,
+		},
+	}
 }
 
 // translateThinkingDeltaNotification converts a reasoning delta notification

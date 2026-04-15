@@ -48,3 +48,4 @@ cancellation_demo.txt
 graceful_shutdown_demo.txt
 /personality
 /service_tier
+/include_partial_messages
