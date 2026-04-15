@@ -6,20 +6,25 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/attribute"
+	promexporter "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
 	noopmetric "go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/trace"
 	nooptrace "go.opentelemetry.io/otel/trace/noop"
+
+	sdkerrors "github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/version"
 )
 
 const (
 	// instrumentationName is the OTel instrumentation scope name.
 	instrumentationName = "github.com/ethpandaops/codex-agent-sdk-go"
-	// instrumentationVersion is the OTel instrumentation scope version.
-	instrumentationVersion = "0.1.0"
 )
 
 // GenAI semantic convention metric names.
@@ -32,7 +37,7 @@ const (
 const (
 	metricToolCallsTotal        = "codex.tool_calls_total"
 	metricToolCallDuration      = "codex.tool_call_duration_seconds"
-	metricCLIProcessRestarts    = "codex.cli_process_restarts_total"
+	metricCLIProcessFailures    = "codex.cli_process_failures_total"
 	metricCLIMessageParseErrors = "codex.cli_message_parse_errors_total"
 )
 
@@ -59,8 +64,29 @@ type Recorder struct {
 	// Codex-specific metrics.
 	toolCallsTotal        metric.Int64Counter
 	toolCallDuration      metric.Float64Histogram
-	cliProcessRestarts    metric.Int64Counter
+	cliProcessFailures    metric.Int64Counter
 	cliMessageParseErrors metric.Int64Counter
+}
+
+// ResolveMeterProvider returns mp if non-nil. Otherwise, if reg is non-nil,
+// it creates a MeterProvider backed by the Prometheus registerer via the
+// OTel→Prometheus bridge. Returns nil when both are nil, which causes
+// NewRecorder to fall back to noop instruments.
+func ResolveMeterProvider(mp metric.MeterProvider, reg prometheus.Registerer) metric.MeterProvider {
+	if mp != nil {
+		return mp
+	}
+
+	if reg == nil {
+		return nil
+	}
+
+	exporter, err := promexporter.New(promexporter.WithRegisterer(reg))
+	if err != nil {
+		return nil
+	}
+
+	return sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
 }
 
 // NewRecorder creates instruments from the provided providers.
@@ -76,11 +102,11 @@ func NewRecorder(mp metric.MeterProvider, tp trace.TracerProvider) *Recorder {
 
 	meter := mp.Meter(
 		instrumentationName,
-		metric.WithInstrumentationVersion(instrumentationVersion),
+		metric.WithInstrumentationVersion(version.Version),
 	)
 	tracer := tp.Tracer(
 		instrumentationName,
-		trace.WithInstrumentationVersion(instrumentationVersion),
+		trace.WithInstrumentationVersion(version.Version),
 	)
 
 	operationDuration, _ := meter.Float64Histogram(
@@ -107,10 +133,10 @@ func NewRecorder(mp metric.MeterProvider, tp trace.TracerProvider) *Recorder {
 		metric.WithUnit("s"),
 	)
 
-	cliProcessRestarts, _ := meter.Int64Counter(
-		metricCLIProcessRestarts,
-		metric.WithDescription("Total number of CLI process restarts"),
-		metric.WithUnit("{restart}"),
+	cliProcessFailures, _ := meter.Int64Counter(
+		metricCLIProcessFailures,
+		metric.WithDescription("Total number of CLI process failures"),
+		metric.WithUnit("{failure}"),
 	)
 
 	cliMessageParseErrors, _ := meter.Int64Counter(
@@ -125,7 +151,7 @@ func NewRecorder(mp metric.MeterProvider, tp trace.TracerProvider) *Recorder {
 		tokenUsage:            tokenUsage,
 		toolCallsTotal:        toolCallsTotal,
 		toolCallDuration:      toolCallDuration,
-		cliProcessRestarts:    cliProcessRestarts,
+		cliProcessFailures:    cliProcessFailures,
 		cliMessageParseErrors: cliMessageParseErrors,
 	}
 }
@@ -157,15 +183,18 @@ func (r *Recorder) StartQuerySpan(
 }
 
 // EndQuerySpan records the query duration metric and ends the span.
+// The operationName must match the value passed to StartQuerySpan
+// (e.g. "query" or "query_stream") so that metrics are correctly attributed.
 func (r *Recorder) EndQuerySpan(
 	ctx context.Context,
 	span trace.Span,
+	operationName string,
 	model string,
 	duration time.Duration,
 	err error,
 ) {
 	attrs := []attribute.KeyValue{
-		attrOperationName.String("query"),
+		attrOperationName.String(operationName),
 	}
 
 	if model != "" {
@@ -185,14 +214,17 @@ func (r *Recorder) EndQuerySpan(
 }
 
 // RecordTokenUsage records input and output token counts.
+// The operationName identifies the operation that produced the tokens
+// (e.g. "query" or "query_stream").
 func (r *Recorder) RecordTokenUsage(
 	ctx context.Context,
+	operationName string,
 	model string,
 	inputTokens int64,
 	outputTokens int64,
 ) {
 	baseAttrs := []attribute.KeyValue{
-		attrOperationName.String("query"),
+		attrOperationName.String(operationName),
 	}
 
 	if model != "" {
@@ -253,9 +285,11 @@ func (r *Recorder) EndToolCallSpan(
 	span.End()
 }
 
-// RecordCLIProcessRestart increments the CLI process restart counter.
-func (r *Recorder) RecordCLIProcessRestart(ctx context.Context) {
-	r.cliProcessRestarts.Add(ctx, 1)
+// RecordCLIProcessFailure increments the CLI process failure counter.
+// This is recorded when the CLI process exits with a non-zero exit code,
+// regardless of whether a restart occurs.
+func (r *Recorder) RecordCLIProcessFailure(ctx context.Context) {
+	r.cliProcessFailures.Add(ctx, 1)
 }
 
 // RecordMessageParseError increments the message parse error counter.
@@ -272,10 +306,50 @@ func (r *Recorder) AddSpanEvent(
 	span.AddEvent(name, trace.WithAttributes(attrs...))
 }
 
-// classifyError returns a short, cardinality-safe error classification.
+// classifyError returns a short, cardinality-safe error classification
+// string suitable for use as the error.type metric attribute.
 func classifyError(err error) string {
 	if err == nil {
 		return ""
+	}
+
+	// Check context errors first (most common).
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+
+	// Check SDK sentinel errors.
+	if errors.Is(err, sdkerrors.ErrRequestTimeout) {
+		return "timeout"
+	}
+
+	if errors.Is(err, sdkerrors.ErrSessionNotFound) {
+		return "session_not_found"
+	}
+
+	// Check SDK typed errors.
+	if _, ok := errors.AsType[*sdkerrors.CLINotFoundError](err); ok {
+		return "cli_not_found"
+	}
+
+	if _, ok := errors.AsType[*sdkerrors.CLIConnectionError](err); ok {
+		return "connection_error"
+	}
+
+	if _, ok := errors.AsType[*sdkerrors.ProcessError](err); ok {
+		return "process_error"
+	}
+
+	if _, ok := errors.AsType[*sdkerrors.MessageParseError](err); ok {
+		return "message_parse_error"
+	}
+
+	if _, ok := errors.AsType[*sdkerrors.CLIJSONDecodeError](err); ok {
+		return "json_decode_error"
 	}
 
 	return "error"

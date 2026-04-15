@@ -79,7 +79,7 @@ func NewCLITransportWithMode(
 		options:        options,
 		prompt:         prompt,
 		stderrCallback: options.Stderr,
-		recorder:       observability.NewRecorder(options.MeterProvider, options.TracerProvider),
+		recorder:       observability.NewRecorder(observability.ResolveMeterProvider(options.MeterProvider, options.PrometheusRegisterer), options.TracerProvider),
 		isStreaming:    isStreaming,
 		closeCh:        make(chan struct{}),
 	}
@@ -329,7 +329,7 @@ func (t *CLITransport) ReadMessages(
 			}
 
 			t.log.Error("CLI process exited with error", "exit_code", exitCode, "stderr", stderrOutput)
-			t.recorder.RecordCLIProcessRestart(ctx)
+			t.recorder.RecordCLIProcessFailure(ctx)
 
 			errs <- &errors.ProcessError{
 				ExitCode: exitCode,

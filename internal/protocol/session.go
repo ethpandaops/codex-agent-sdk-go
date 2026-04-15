@@ -53,7 +53,7 @@ func NewSession(
 		log:             log.With("component", "session"),
 		controller:      controller,
 		options:         options,
-		recorder:        observability.NewRecorder(options.MeterProvider, options.TracerProvider),
+		recorder:        observability.NewRecorder(observability.ResolveMeterProvider(options.MeterProvider, options.PrometheusRegisterer), options.TracerProvider),
 		sdkMcpServers:   make(map[string]mcp.ServerInstance, 4),
 		sdkDynamicTools: make(map[string]*config.DynamicTool, 4),
 	}
@@ -489,7 +489,7 @@ func (s *Session) HandleDynamicToolCall(
 	if tool, ok := s.sdkDynamicTools[toolFullName]; ok {
 		result, err := s.executeDynamicTool(ctx, tool, arguments)
 
-		outcome := "success"
+		outcome := "ok"
 		if err != nil || (result != nil && result["success"] == false) {
 			outcome = "error"
 		}
@@ -543,7 +543,7 @@ func (s *Session) HandleDynamicToolCall(
 
 	isError, _ := result["is_error"].(bool)
 
-	outcome := "success"
+	outcome := "ok"
 	if isError {
 		outcome = "error"
 	}

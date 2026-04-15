@@ -128,9 +128,13 @@ func validateAndConfigureOptions(options *CodexAgentOptions) error {
 }
 
 // newRecorder creates an observability Recorder from the given options.
-// Returns a noop recorder when no providers are configured.
+// When WithPrometheusRegisterer is set but WithMeterProvider is not, a
+// MeterProvider is auto-created from the registerer via the OTel→Prometheus
+// bridge. Returns a noop recorder when no providers are configured.
 func newRecorder(options *CodexAgentOptions) *observability.Recorder {
-	return observability.NewRecorder(options.MeterProvider, options.TracerProvider)
+	mp := observability.ResolveMeterProvider(options.MeterProvider, options.PrometheusRegisterer)
+
+	return observability.NewRecorder(mp, options.TracerProvider)
 }
 
 // Query executes a one-shot query to the Codex CLI and returns an iterator of messages.
@@ -190,7 +194,7 @@ func Query(
 		var queryErr error
 
 		defer func() {
-			recorder.EndQuerySpan(ctx, querySpan, options.Model, time.Since(queryStart), queryErr)
+			recorder.EndQuerySpan(ctx, querySpan, "query", options.Model, time.Since(queryStart), queryErr)
 		}()
 
 		var transport config.Transport
@@ -351,7 +355,7 @@ func Query(
 					}
 
 					if resultMsg.Usage != nil {
-						recorder.RecordTokenUsage(ctx, options.Model,
+						recorder.RecordTokenUsage(ctx, "query", options.Model,
 							int64(resultMsg.Usage.InputTokens),
 							int64(resultMsg.Usage.OutputTokens),
 						)
@@ -507,7 +511,7 @@ func QueryStream(
 		var queryErr error
 
 		defer func() {
-			recorder.EndQuerySpan(ctx, querySpan, options.Model, time.Since(queryStart), queryErr)
+			recorder.EndQuerySpan(ctx, querySpan, "query_stream", options.Model, time.Since(queryStart), queryErr)
 		}()
 
 		// QueryStream uses app-server semantics unless a custom transport is injected.
@@ -657,7 +661,7 @@ func QueryStream(
 
 				if resultMsg, ok := parsed.(*message.ResultMessage); ok {
 					if resultMsg.Usage != nil {
-						recorder.RecordTokenUsage(ctx, options.Model,
+						recorder.RecordTokenUsage(ctx, "query_stream", options.Model,
 							int64(resultMsg.Usage.InputTokens),
 							int64(resultMsg.Usage.OutputTokens),
 						)

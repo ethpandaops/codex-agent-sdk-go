@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
@@ -113,7 +114,7 @@ func (c *Client) initializeCore(ctx context.Context, options *config.Options) er
 	}
 
 	c.options = options
-	c.recorder = observability.NewRecorder(options.MeterProvider, options.TracerProvider)
+	c.recorder = observability.NewRecorder(observability.ResolveMeterProvider(options.MeterProvider, options.PrometheusRegisterer), options.TracerProvider)
 
 	var transport config.Transport
 
@@ -390,6 +391,12 @@ func (c *Client) Query(ctx context.Context, content message.UserMessageContent, 
 		return errors.ErrClientNotConnected
 	}
 
+	queryStart := time.Now()
+
+	var querySpan trace.Span
+
+	ctx, querySpan = c.recorder.StartQuerySpan(ctx, "query", c.options.Model)
+
 	sid := "default"
 	if len(sessionID) > 0 && sessionID[0] != "" {
 		sid = sessionID[0]
@@ -407,10 +414,15 @@ func (c *Client) Query(ctx context.Context, content message.UserMessageContent, 
 
 	data, err := json.Marshal(payload)
 	if err != nil {
+		c.recorder.EndQuerySpan(ctx, querySpan, "query", c.options.Model, time.Since(queryStart), err)
+
 		return fmt.Errorf("marshal query: %w", err)
 	}
 
-	return c.transport.SendMessage(ctx, data)
+	sendErr := c.transport.SendMessage(ctx, data)
+	c.recorder.EndQuerySpan(ctx, querySpan, "query", c.options.Model, time.Since(queryStart), sendErr)
+
+	return sendErr
 }
 
 // receive waits for and returns the next message from the agent.
