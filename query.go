@@ -223,6 +223,8 @@ func Query(
 			}
 
 			if err := config.ValidateOptionsForBackend(options, backend); err != nil {
+				queryErr = err
+
 				yield(nil, err)
 
 				return
@@ -237,13 +239,16 @@ func Query(
 		} else if options.Transport == nil {
 			log.Debug("creating CLI transport")
 
-			transport = subprocess.NewCLITransport(log, execPrompt, execOptions)
+			transport = subprocess.NewCLITransport(log, execPrompt, execOptions, recorder)
 		}
 
 		log.Info("starting transport")
 
 		if err := transport.Start(ctx); err != nil {
 			log.Error("failed to start CLI", "error", err)
+
+			queryErr = err
+
 			yield(nil, err)
 
 			return
@@ -259,14 +264,16 @@ func Query(
 
 		controller := protocol.NewController(log, transport)
 		if err := controller.Start(ctx); err != nil {
-			yield(nil, fmt.Errorf("start protocol controller: %w", err))
+			queryErr = fmt.Errorf("start protocol controller: %w", err)
+
+			yield(nil, queryErr)
 
 			return
 		}
 
 		defer controller.Stop()
 
-		session := protocol.NewSession(log, controller, options)
+		session := protocol.NewSession(log, controller, options, recorder)
 		session.RegisterMCPServers()
 		session.RegisterDynamicTools()
 		session.RegisterHandlers()
@@ -275,7 +282,9 @@ func Query(
 			log.Debug("initializing session for hooks/callbacks")
 
 			if err := session.Initialize(ctx); err != nil {
-				yield(nil, fmt.Errorf("initialize session: %w", err))
+				queryErr = fmt.Errorf("initialize session: %w", err)
+
+				yield(nil, queryErr)
 
 				return
 			}
@@ -286,13 +295,17 @@ func Query(
 
 			data, err := json.Marshal(userMessage)
 			if err != nil {
-				yield(nil, fmt.Errorf("marshal initial user message: %w", err))
+				queryErr = fmt.Errorf("marshal initial user message: %w", err)
+
+				yield(nil, queryErr)
 
 				return
 			}
 
 			if err := transport.SendMessage(ctx, data); err != nil {
-				yield(nil, fmt.Errorf("send initial user message: %w", err))
+				queryErr = fmt.Errorf("send initial user message: %w", err)
+
+				yield(nil, queryErr)
 
 				return
 			}
@@ -300,7 +313,9 @@ func Query(
 			log.Debug("closing stdin for one-shot query mode")
 
 			if err := transport.EndInput(); err != nil {
-				yield(nil, fmt.Errorf("close stdin: %w", err))
+				queryErr = fmt.Errorf("close stdin: %w", err)
+
+				yield(nil, queryErr)
 
 				return
 			}
@@ -320,6 +335,9 @@ func Query(
 
 					if err := controller.FatalError(); err != nil {
 						log.Error("error from transport", "error", err)
+
+						queryErr = err
+
 						yield(nil, err)
 					}
 
@@ -558,7 +576,7 @@ func QueryStream(
 
 		defer controller.Stop()
 
-		session := protocol.NewSession(log, controller, options)
+		session := protocol.NewSession(log, controller, options, recorder)
 		session.RegisterMCPServers()
 		session.RegisterDynamicTools()
 		session.RegisterHandlers()
@@ -619,100 +637,112 @@ func QueryStream(
 
 		log.Debug("reading messages from controller")
 
-		for {
-			select {
-			case msg, ok := <-rawMessages:
-				if !ok {
-					log.Debug("raw message channel closed")
+		queryErr = streamReceiveLoop(ctx, log, recorder, controller, options, "query_stream",
+			rawMessages, gCtx, g, closeResult, hasMCPOrHooks, yield)
+	}
+}
 
-					if err := controller.FatalError(); err != nil {
-						log.Error("error from transport", "error", err)
-
-						queryErr = err
-
-						yield(nil, err)
-					}
-
-					return
-				}
-
-				parsed, err := message.Parse(log, msg)
-				if errors.Is(err, sdkerrors.ErrUnknownMessageType) {
-					continue
-				}
-
-				if err != nil {
-					log.Warn("failed to parse message", "error", err)
-					recorder.RecordMessageParseError(ctx)
-
-					queryErr = fmt.Errorf("parse message: %w", err)
-					if !yield(nil, queryErr) {
-						return
-					}
-
-					continue
-				}
-
-				if hasMCPOrHooks {
-					if _, isResult := parsed.(*message.ResultMessage); isResult {
-						closeResult()
-					}
-				}
-
-				if resultMsg, ok := parsed.(*message.ResultMessage); ok {
-					if resultMsg.Usage != nil {
-						recorder.RecordTokenUsage(ctx, "query_stream", options.Model,
-							int64(resultMsg.Usage.InputTokens),
-							int64(resultMsg.Usage.OutputTokens),
-						)
-					}
-				}
-
-				if !yield(parsed, nil) {
-					log.Debug("yield returned false, stopping iteration")
-
-					return
-				}
-
-				// QueryStream represents a single streaming query. Once the final
-				// ResultMessage arrives, stop iterating instead of waiting for
-				// transport/controller shutdown, which may happen later.
-				if _, isResult := parsed.(*message.ResultMessage); isResult {
-					log.Debug("result message received, stopping iteration")
-
-					return
-				}
-
-			case <-controller.Done():
-				log.Debug("controller stopped")
+// streamReceiveLoop reads parsed messages from the controller and yields them.
+// It returns the first fatal error encountered, or nil on clean completion.
+func streamReceiveLoop(
+	ctx context.Context,
+	log *slog.Logger,
+	recorder *observability.Recorder,
+	controller *protocol.Controller,
+	options *CodexAgentOptions,
+	operationName string,
+	rawMessages <-chan map[string]any,
+	gCtx context.Context,
+	g *errgroup.Group,
+	closeResult func(),
+	hasMCPOrHooks bool,
+	yield func(Message, error) bool,
+) error {
+	for {
+		select {
+		case msg, ok := <-rawMessages:
+			if !ok {
+				log.Debug("raw message channel closed")
 
 				if err := controller.FatalError(); err != nil {
 					log.Error("error from transport", "error", err)
-
-					queryErr = err
-
 					yield(nil, err)
+
+					return err
 				}
 
-				return
-
-			case <-ctx.Done():
-				log.Debug("context cancelled")
-
-				queryErr = ctx.Err()
-
-				yield(nil, ctx.Err())
-
-				return
-
-			case <-gCtx.Done():
-				if err := g.Wait(); err != nil {
-					log.Error("streaming goroutine failed", "error", err)
-					yield(nil, err)
-				}
-
-				return
+				return nil
 			}
+
+			parsed, err := message.Parse(log, msg)
+			if errors.Is(err, sdkerrors.ErrUnknownMessageType) {
+				continue
+			}
+
+			if err != nil {
+				log.Warn("failed to parse message", "error", err)
+				recorder.RecordMessageParseError(ctx)
+
+				fmtErr := fmt.Errorf("parse message: %w", err)
+				if !yield(nil, fmtErr) {
+					return fmtErr
+				}
+
+				continue
+			}
+
+			if hasMCPOrHooks {
+				if _, isResult := parsed.(*message.ResultMessage); isResult {
+					closeResult()
+				}
+			}
+
+			if resultMsg, ok := parsed.(*message.ResultMessage); ok {
+				if resultMsg.Usage != nil {
+					recorder.RecordTokenUsage(ctx, operationName, options.Model,
+						int64(resultMsg.Usage.InputTokens),
+						int64(resultMsg.Usage.OutputTokens),
+					)
+				}
+			}
+
+			if !yield(parsed, nil) {
+				log.Debug("yield returned false, stopping iteration")
+
+				return nil
+			}
+
+			if _, isResult := parsed.(*message.ResultMessage); isResult {
+				log.Debug("result message received, stopping iteration")
+
+				return nil
+			}
+
+		case <-controller.Done():
+			log.Debug("controller stopped")
+
+			if err := controller.FatalError(); err != nil {
+				log.Error("error from transport", "error", err)
+				yield(nil, err)
+
+				return err
+			}
+
+			return nil
+
+		case <-ctx.Done():
+			log.Debug("context cancelled")
+			yield(nil, ctx.Err())
+
+			return ctx.Err()
+
+		case <-gCtx.Done():
+			if err := g.Wait(); err != nil {
+				log.Error("streaming goroutine failed", "error", err)
+				yield(nil, err)
+			}
+
+			return nil
 		}
 	}
 }

@@ -1,5 +1,9 @@
-// Package main demonstrates using WithMeterProvider and WithTracerProvider
-// for OpenTelemetry observability with the Codex Agent SDK.
+// Package main demonstrates using WithPrometheusRegisterer for OpenTelemetry
+// observability with the Codex Agent SDK.
+//
+// WithPrometheusRegisterer is the simplest way to get Prometheus metrics from
+// the SDK. It automatically creates an OTel MeterProvider backed by the
+// provided Prometheus registerer via the OTel→Prometheus bridge.
 package main
 
 import (
@@ -9,7 +13,7 @@ import (
 	"os"
 	"time"
 
-	"go.opentelemetry.io/otel/sdk/metric"
+	"github.com/prometheus/client_golang/prometheus"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	codexsdk "github.com/ethpandaops/codex-agent-sdk-go"
@@ -20,19 +24,9 @@ func main() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	// Create an OTel MeterProvider with a manual reader.
-	// In production, replace with a Prometheus exporter or OTLP exporter:
-	//   import "go.opentelemetry.io/otel/exporters/prometheus"
-	//   exporter, _ := prometheus.New()
-	//   mp := metric.NewMeterProvider(metric.WithReader(exporter))
-	reader := metric.NewManualReader()
-	mp := metric.NewMeterProvider(metric.WithReader(reader))
-
-	defer func() {
-		if err := mp.Shutdown(context.Background()); err != nil {
-			logger.Error("failed to shutdown meter provider", "error", err)
-		}
-	}()
+	// Create a Prometheus registry. In production, use prometheus.DefaultRegisterer
+	// or a custom registry exposed via an HTTP handler for scraping.
+	reg := prometheus.NewRegistry()
 
 	// Create an OTel TracerProvider for distributed tracing.
 	tp := sdktrace.NewTracerProvider()
@@ -46,18 +40,22 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Pass both providers to the SDK. When set, the SDK records:
+	// Pass the Prometheus registerer and tracer provider to the SDK.
+	// When WithPrometheusRegisterer is set (and WithMeterProvider is not),
+	// the SDK automatically creates an OTel MeterProvider from the registerer.
+	//
+	// The SDK records:
 	//   - gen_ai.client.operation.duration (histogram)
 	//   - gen_ai.client.token.usage (counter)
 	//   - codex.tool_calls_total (counter)
 	//   - codex.tool_call_duration_seconds (histogram)
-	//   - codex.cli_process_restarts_total (counter)
+	//   - codex.cli_process_failures_total (counter)
 	//   - codex.cli_message_parse_errors_total (counter)
 	//   - One span per Query/QueryStream call
 	//   - Child spans per tool invocation
 	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("What is 2 + 2?"),
 		codexsdk.WithLogger(logger),
-		codexsdk.WithMeterProvider(mp),
+		codexsdk.WithPrometheusRegisterer(reg),
 		codexsdk.WithTracerProvider(tp),
 		codexsdk.WithPermissionMode("bypassPermissions"),
 	) {
@@ -83,5 +81,20 @@ func main() {
 					m.Usage.InputTokens, m.Usage.OutputTokens)
 			}
 		}
+	}
+
+	// In production, expose reg via promhttp.HandlerFor(reg, ...) on an
+	// HTTP endpoint for Prometheus to scrape.
+	families, err := reg.Gather()
+	if err != nil {
+		logger.Error("failed to gather metrics", "error", err)
+
+		return
+	}
+
+	fmt.Printf("\nCollected %d metric families from Prometheus registry\n", len(families))
+
+	for _, fam := range families {
+		fmt.Printf("  %s\n", fam.GetName())
 	}
 }

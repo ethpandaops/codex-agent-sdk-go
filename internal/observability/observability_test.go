@@ -248,6 +248,36 @@ func TestRecorder_ToolCallMetrics(t *testing.T) {
 	require.True(t, foundHistogram, "expected %s metric", metricToolCallDuration)
 }
 
+func TestRecorder_ToolCallDenied(t *testing.T) {
+	t.Parallel()
+
+	reader := metric.NewManualReader()
+	mp := metric.NewMeterProvider(metric.WithReader(reader))
+
+	defer func() { _ = mp.Shutdown(context.Background()) }()
+
+	r := NewRecorder(mp, nil)
+	ctx := context.Background()
+
+	r.RecordToolCallDenied(ctx, "bash")
+
+	var rm metricdata.ResourceMetrics
+
+	require.NoError(t, reader.Collect(ctx, &rm))
+
+	found := false
+
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == metricToolCallsTotal {
+				found = true
+			}
+		}
+	}
+
+	require.True(t, found, "expected %s metric with denied outcome", metricToolCallsTotal)
+}
+
 func TestRecorder_CLIProcessFailureMetric(t *testing.T) {
 	t.Parallel()
 

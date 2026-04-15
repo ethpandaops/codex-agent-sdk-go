@@ -27,6 +27,9 @@ import (
 const (
 	// defaultInitializeTimeout is the default timeout for initialize control requests.
 	defaultInitializeTimeout = 60 * time.Second
+
+	// outcomeError is the tool call outcome value for failed invocations.
+	outcomeError = "error"
 )
 
 // Session encapsulates protocol handling logic for MCP servers and callbacks.
@@ -44,16 +47,22 @@ type Session struct {
 }
 
 // NewSession creates a new Session for protocol handling.
+// If recorder is nil, a noop recorder is used.
 func NewSession(
 	log *slog.Logger,
 	controller *Controller,
 	options *config.Options,
+	recorder *observability.Recorder,
 ) *Session {
+	if recorder == nil {
+		recorder = observability.NopRecorder()
+	}
+
 	return &Session{
 		log:             log.With("component", "session"),
 		controller:      controller,
 		options:         options,
-		recorder:        observability.NewRecorder(observability.ResolveMeterProvider(options.MeterProvider, options.PrometheusRegisterer), options.TracerProvider),
+		recorder:        recorder,
 		sdkMcpServers:   make(map[string]mcp.ServerInstance, 4),
 		sdkDynamicTools: make(map[string]*config.DynamicTool, 4),
 	}
@@ -491,7 +500,7 @@ func (s *Session) HandleDynamicToolCall(
 
 		outcome := "ok"
 		if err != nil || (result != nil && result["success"] == false) {
-			outcome = "error"
+			outcome = outcomeError
 		}
 
 		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcome, time.Since(callStart))
@@ -502,7 +511,7 @@ func (s *Session) HandleDynamicToolCall(
 	// Fall back to MCP server lookup for mcp__<server>__<tool> names.
 	serverName, toolName, err := parseMCPToolName(toolFullName)
 	if err != nil {
-		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, "error", time.Since(callStart))
+		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcomeError, time.Since(callStart))
 
 		//nolint:nilerr // Error is encoded in the protocol response
 		return map[string]any{
@@ -516,7 +525,7 @@ func (s *Session) HandleDynamicToolCall(
 
 	server, exists := s.sdkMcpServers[serverName]
 	if !exists {
-		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, "error", time.Since(callStart))
+		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcomeError, time.Since(callStart))
 
 		return map[string]any{
 			"success": false,
@@ -529,7 +538,7 @@ func (s *Session) HandleDynamicToolCall(
 
 	result, callErr := server.CallTool(ctx, toolName, arguments)
 	if callErr != nil {
-		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, "error", time.Since(callStart))
+		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcomeError, time.Since(callStart))
 
 		//nolint:nilerr // Error is encoded in the protocol response
 		return map[string]any{
@@ -545,7 +554,7 @@ func (s *Session) HandleDynamicToolCall(
 
 	outcome := "ok"
 	if isError {
-		outcome = "error"
+		outcome = outcomeError
 	}
 
 	s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcome, time.Since(callStart))
@@ -884,6 +893,10 @@ func (s *Session) HandleCanUseTool(
 		}, nil
 
 	case *permission.ResultDeny:
+		// Record the denied tool call so dashboards can distinguish
+		// denials from errors.
+		s.recorder.RecordToolCallDenied(ctx, toolName)
+
 		return map[string]any{
 			"decision": "decline",
 		}, nil

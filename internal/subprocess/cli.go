@@ -55,12 +55,14 @@ type CLITransport struct {
 var _ config.Transport = (*CLITransport)(nil)
 
 // NewCLITransport creates a new CLI transport for one-shot exec mode.
+// If recorder is nil, a noop recorder is used.
 func NewCLITransport(
 	log *slog.Logger,
 	prompt string,
 	options *config.Options,
+	recorder *observability.Recorder,
 ) *CLITransport {
-	return NewCLITransportWithMode(log, prompt, options, false)
+	return NewCLITransportWithMode(log, prompt, options, false, recorder)
 }
 
 // NewCLITransportWithMode creates a new CLI transport with explicit mode control.
@@ -68,18 +70,24 @@ func NewCLITransport(
 // When isStreaming is true, the transport spawns `codex app-server` and keeps
 // stdin open for bidirectional JSON-RPC. When false, it spawns `codex exec`
 // for one-shot queries.
+// If recorder is nil, a noop recorder is used.
 func NewCLITransportWithMode(
 	log *slog.Logger,
 	prompt string,
 	options *config.Options,
 	isStreaming bool,
+	recorder *observability.Recorder,
 ) *CLITransport {
+	if recorder == nil {
+		recorder = observability.NopRecorder()
+	}
+
 	return &CLITransport{
 		log:            log.With("component", "cli_transport"),
 		options:        options,
 		prompt:         prompt,
 		stderrCallback: options.Stderr,
-		recorder:       observability.NewRecorder(observability.ResolveMeterProvider(options.MeterProvider, options.PrometheusRegisterer), options.TracerProvider),
+		recorder:       recorder,
 		isStreaming:    isStreaming,
 		closeCh:        make(chan struct{}),
 	}

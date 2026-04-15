@@ -7,6 +7,7 @@ package observability
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -83,6 +84,8 @@ func ResolveMeterProvider(mp metric.MeterProvider, reg prometheus.Registerer) me
 
 	exporter, err := promexporter.New(promexporter.WithRegisterer(reg))
 	if err != nil {
+		slog.Warn("failed to create prometheus exporter, falling back to noop metrics", "error", err)
+
 		return nil
 	}
 
@@ -283,6 +286,17 @@ func (r *Recorder) EndToolCallSpan(
 
 	span.SetAttributes(attrToolOutcome.String(outcome))
 	span.End()
+}
+
+// RecordToolCallDenied increments the tool calls counter with outcome "denied".
+// This is recorded when the permission callback denies a tool invocation.
+func (r *Recorder) RecordToolCallDenied(ctx context.Context, toolName string) {
+	attrs := []attribute.KeyValue{
+		attrToolName.String(toolName),
+		attrToolOutcome.String("denied"),
+	}
+
+	r.toolCallsTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
 
 // RecordCLIProcessFailure increments the CLI process failure counter.

@@ -143,7 +143,7 @@ func (c *Client) initializeCore(ctx context.Context, options *config.Options) er
 		return fmt.Errorf("start protocol controller: %w", err)
 	}
 
-	c.session = protocol.NewSession(c.log, c.controller, options)
+	c.session = protocol.NewSession(c.log, c.controller, options, c.recorder)
 	c.session.RegisterMCPServers()
 	c.session.RegisterDynamicTools()
 	c.session.RegisterHandlers()
@@ -359,6 +359,15 @@ func (c *Client) readLoop(ctx context.Context) error {
 				return fmt.Errorf("parse message: %w", err)
 			}
 
+			// Record token usage when a ResultMessage arrives so that
+			// Client.Query() callers get gen_ai.client.token.usage metrics.
+			if resultMsg, ok := parsed.(*message.ResultMessage); ok && resultMsg.Usage != nil {
+				c.recorder.RecordTokenUsage(ctx, "query", c.options.Model,
+					int64(resultMsg.Usage.InputTokens),
+					int64(resultMsg.Usage.OutputTokens),
+				)
+			}
+
 			select {
 			case c.messages <- parsed:
 			case <-c.done:
@@ -395,7 +404,11 @@ func (c *Client) Query(ctx context.Context, content message.UserMessageContent, 
 
 	var querySpan trace.Span
 
-	ctx, querySpan = c.recorder.StartQuerySpan(ctx, "query", c.options.Model)
+	// NOTE: This span covers the send phase only, not the full LLM round-trip.
+	// The Client API is asynchronous: Query sends the message, ReceiveResponse
+	// collects the reply. A full round-trip span would require correlating
+	// across those calls, which is deferred to a future iteration.
+	ctx, querySpan = c.recorder.StartQuerySpan(ctx, "query.send", c.options.Model)
 
 	sid := "default"
 	if len(sessionID) > 0 && sessionID[0] != "" {
@@ -414,13 +427,13 @@ func (c *Client) Query(ctx context.Context, content message.UserMessageContent, 
 
 	data, err := json.Marshal(payload)
 	if err != nil {
-		c.recorder.EndQuerySpan(ctx, querySpan, "query", c.options.Model, time.Since(queryStart), err)
+		c.recorder.EndQuerySpan(ctx, querySpan, "query.send", c.options.Model, time.Since(queryStart), err)
 
 		return fmt.Errorf("marshal query: %w", err)
 	}
 
 	sendErr := c.transport.SendMessage(ctx, data)
-	c.recorder.EndQuerySpan(ctx, querySpan, "query", c.options.Model, time.Since(queryStart), sendErr)
+	c.recorder.EndQuerySpan(ctx, querySpan, "query.send", c.options.Model, time.Since(queryStart), sendErr)
 
 	return sendErr
 }
