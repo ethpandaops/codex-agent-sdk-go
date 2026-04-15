@@ -361,6 +361,40 @@ func TestSDKTools_ReturnValue(t *testing.T) {
 	require.True(t, mentionedNumber, "Agent should mention the returned number (42)")
 }
 
+// TestMCPStdio_ConfigLoadsWithArgs is a regression test for the bug where
+// MCPStdioServerConfig.Args was serialized as repeated scalar -c overrides,
+// each replacing the prior value at the same dotted path. That produced a
+// single string for `args` instead of a TOML array, and codex exited during
+// config validation before the app-server handshake could complete.
+//
+// The surfaced error was "transport closed while waiting for response" —
+// which pointed at the transport layer, not at config serialization.
+//
+// This test uses `/bin/sh -c 'cat'` as a placeholder stdio "server": it never
+// speaks MCP, but codex only needs the config to load cleanly for client.Start
+// to succeed. Inner MCP handshake failures surface via GetMCPStatus, not Start.
+func TestMCPStdio_ConfigLoadsWithArgs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := codexsdk.NewClient()
+	defer client.Close()
+
+	err := client.Start(ctx,
+		codexsdk.WithPermissionMode("bypassPermissions"),
+		codexsdk.WithMCPServers(map[string]codexsdk.MCPServerConfig{
+			"stdio-args": &codexsdk.MCPStdioServerConfig{
+				Command: "/bin/sh",
+				Args:    []string{"-c", "cat"},
+			},
+		}),
+	)
+	if err != nil {
+		skipIfCLINotInstalled(t, err)
+		t.Fatalf("client.Start failed with stdio MCP args (likely Args serialization regression): %v", err)
+	}
+}
+
 func TestMCPStatus_IncludesSDKServerMetadata(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

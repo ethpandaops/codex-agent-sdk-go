@@ -878,6 +878,13 @@ func TestBuildExecArgs_WithMCPServers_SSE(t *testing.T) {
 }
 
 // TestBuildExecArgs_WithMCPServers_Stdio tests stdio MCP server serialization.
+//
+// Args must be emitted as a single TOML inline array under one -c override.
+// Emitting one -c mcp_servers.NAME.args=VAL per element does NOT accumulate
+// into an array — each -c override replaces the previous value at the same
+// dotted path. Codex's config schema requires Vec<String>, so repeated scalar
+// overrides cause the subprocess to exit before handshake with
+// `invalid type: string ..., expected a sequence`.
 func TestBuildExecArgs_WithMCPServers_Stdio(t *testing.T) {
 	options := &config.Options{
 		MCPServers: map[string]mcp.ServerConfig{
@@ -893,10 +900,88 @@ func TestBuildExecArgs_WithMCPServers_Stdio(t *testing.T) {
 
 	require.Contains(t, args, "mcp_servers.local-tool.type=stdio")
 	require.Contains(t, args, "mcp_servers.local-tool.command=/usr/bin/my-tool")
-	require.Contains(t, args, "mcp_servers.local-tool.args=--port")
-	require.Contains(t, args, "mcp_servers.local-tool.args=8080")
+	require.Contains(t, args, `mcp_servers.local-tool.args=["--port","8080"]`,
+		"Args must be serialized as a single TOML inline array override")
+	require.NotContains(t, args, "mcp_servers.local-tool.args=--port",
+		"Args must NOT be emitted as repeated scalar -c overrides")
+	require.NotContains(t, args, "mcp_servers.local-tool.args=8080",
+		"Args must NOT be emitted as repeated scalar -c overrides")
 	require.Contains(t, args, "mcp_servers.local-tool.env.DEBUG=true")
 	require.Contains(t, args, "mcp_servers.local-tool.env.HOME=/tmp")
+}
+
+// TestBuildExecArgs_WithMCPServers_StdioArgsNpx covers the real-world npx case
+// from the issue report: `npx -y @playwright/mcp@latest`.
+func TestBuildExecArgs_WithMCPServers_StdioArgsNpx(t *testing.T) {
+	options := &config.Options{
+		MCPServers: map[string]mcp.ServerConfig{
+			"playwright": &mcp.StdioServerConfig{
+				Command: "npx",
+				Args:    []string{"-y", "@playwright/mcp@latest"},
+			},
+		},
+	}
+
+	args := BuildExecArgs("test", options)
+
+	require.Contains(t, args, `mcp_servers.playwright.args=["-y","@playwright/mcp@latest"]`)
+}
+
+// TestBuildExecArgs_WithMCPServers_StdioArgsSingleton ensures even a single arg
+// is wrapped in array form — codex config declares args as Vec<String>, so a
+// single scalar value fails type-checking even with one element.
+func TestBuildExecArgs_WithMCPServers_StdioArgsSingleton(t *testing.T) {
+	options := &config.Options{
+		MCPServers: map[string]mcp.ServerConfig{
+			"solo": &mcp.StdioServerConfig{
+				Command: "tool",
+				Args:    []string{"only-arg"},
+			},
+		},
+	}
+
+	args := BuildExecArgs("test", options)
+
+	require.Contains(t, args, `mcp_servers.solo.args=["only-arg"]`)
+	require.NotContains(t, args, "mcp_servers.solo.args=only-arg")
+}
+
+// TestBuildExecArgs_WithMCPServers_StdioArgsEscaping verifies that args with
+// quotes, backslashes, or other special characters are safely escaped so the
+// resulting TOML is valid.
+func TestBuildExecArgs_WithMCPServers_StdioArgsEscaping(t *testing.T) {
+	options := &config.Options{
+		MCPServers: map[string]mcp.ServerConfig{
+			"edge": &mcp.StdioServerConfig{
+				Command: "echo",
+				Args:    []string{`has "quote"`, `c:\path\to`},
+			},
+		},
+	}
+
+	args := BuildExecArgs("test", options)
+
+	require.Contains(t, args, `mcp_servers.edge.args=["has \"quote\"","c:\\path\\to"]`)
+}
+
+// TestBuildExecArgs_WithMCPServers_StdioArgsEmpty ensures no args= override is
+// emitted at all when Args is empty — emitting args="" would make codex see a
+// scalar empty string instead of an empty Vec<String>.
+func TestBuildExecArgs_WithMCPServers_StdioArgsEmpty(t *testing.T) {
+	options := &config.Options{
+		MCPServers: map[string]mcp.ServerConfig{
+			"no-args": &mcp.StdioServerConfig{
+				Command: "my-cmd",
+			},
+		},
+	}
+
+	args := BuildExecArgs("test", options)
+
+	for _, a := range args {
+		require.NotContains(t, a, "mcp_servers.no-args.args",
+			"Empty Args must not produce any args= override")
+	}
 }
 
 // TestBuildExecArgs_WithMCPServers_SDKSkipped tests that SDK servers are skipped.
