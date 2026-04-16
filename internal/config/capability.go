@@ -129,6 +129,14 @@ var optionCapabilities = []OptionCapability{
 		Field: "PrometheusRegisterer", OptionName: "WithPrometheusRegisterer", Exec: SupportSupported,
 		AppServer: SupportSupported, Notes: "SDK-local observability, creates MeterProvider from Prometheus registry",
 	},
+	{
+		Field: "MetricsRecorder", OptionName: "initMetricsRecorder", Exec: SupportSupported,
+		AppServer: SupportSupported, Notes: "SDK-internal, set at runtime by initMetricsRecorder",
+	},
+	{
+		Field: "Observer", OptionName: "initMetricsRecorder", Exec: SupportSupported,
+		AppServer: SupportSupported, Notes: "SDK-internal, set at runtime alongside MetricsRecorder",
+	},
 }
 
 var optionCapabilityByField = func() map[string]OptionCapability {

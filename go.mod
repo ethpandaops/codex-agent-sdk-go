@@ -3,6 +3,7 @@ module github.com/ethpandaops/codex-agent-sdk-go
 go 1.26.0
 
 require (
+	github.com/ethpandaops/agent-sdk-observability v0.0.1
 	github.com/glebarez/go-sqlite v1.22.0
 	github.com/google/jsonschema-go v0.4.2
 	github.com/google/uuid v1.6.0

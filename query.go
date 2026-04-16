@@ -19,7 +19,6 @@ import (
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	sdkerrors "github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
-	"github.com/ethpandaops/codex-agent-sdk-go/internal/observability"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/protocol"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/subprocess"
 )
@@ -127,16 +126,6 @@ func validateAndConfigureOptions(options *CodexAgentOptions) error {
 	return config.ConfigureToolPermissionPolicy(options)
 }
 
-// newRecorder creates an observability Recorder from the given options.
-// When WithPrometheusRegisterer is set but WithMeterProvider is not, a
-// MeterProvider is auto-created from the registerer via the OTel→Prometheus
-// bridge. Returns a noop recorder when no providers are configured.
-func newRecorder(options *CodexAgentOptions) *observability.Recorder {
-	mp := observability.ResolveMeterProvider(options.MeterProvider, options.PrometheusRegisterer)
-
-	return observability.NewRecorder(mp, options.TracerProvider)
-}
-
 // Query executes a one-shot query to the Codex CLI and returns an iterator of messages.
 //
 // By default, logging is disabled. Use WithLogger to enable logging:
@@ -184,17 +173,21 @@ func Query(
 		log = log.With("component", "query")
 		log.Debug("starting query execution")
 
-		recorder := newRecorder(options)
-		queryStart := time.Now()
-
-		var querySpan trace.Span
-
-		ctx, querySpan = recorder.StartQuerySpan(ctx, "query", options.Model)
+		// Initialize OTel metrics recorder from providers if configured.
+		initMetricsRecorder(options)
 
 		var queryErr error
 
+		var querySpan trace.Span
+
+		ctx, querySpan = startQuerySpan(ctx, options, "query")
+
 		defer func() {
-			recorder.EndQuerySpan(ctx, querySpan, "query", options.Model, time.Since(queryStart), queryErr)
+			if queryErr != nil {
+				querySpan.SetStatus(1, queryErr.Error()) // codes.Error = 1
+			}
+
+			querySpan.End()
 		}()
 
 		var transport config.Transport
@@ -239,7 +232,7 @@ func Query(
 		} else if options.Transport == nil {
 			log.Debug("creating CLI transport")
 
-			transport = subprocess.NewCLITransport(log, execPrompt, execOptions, recorder)
+			transport = subprocess.NewCLITransport(log, execPrompt, execOptions)
 		}
 
 		log.Info("starting transport")
@@ -273,7 +266,7 @@ func Query(
 
 		defer controller.Stop()
 
-		session := protocol.NewSession(log, controller, options, recorder)
+		session := protocol.NewSession(log, controller, options)
 		session.RegisterMCPServers()
 		session.RegisterDynamicTools()
 		session.RegisterHandlers()
@@ -351,7 +344,6 @@ func Query(
 
 				if err != nil {
 					log.Warn("failed to parse message", "error", err)
-					recorder.RecordMessageParseError(ctx)
 
 					queryErr = fmt.Errorf("parse message: %w", err)
 					if !yield(nil, queryErr) {
@@ -371,13 +363,10 @@ func Query(
 					if resultMsg.SessionID == "" && sessionID != "" {
 						resultMsg.SessionID = sessionID
 					}
+				}
 
-					if resultMsg.Usage != nil {
-						recorder.RecordTokenUsage(ctx, "query", options.Model,
-							int64(resultMsg.Usage.InputTokens),
-							int64(resultMsg.Usage.OutputTokens),
-						)
-					}
+				if options.MetricsRecorder != nil {
+					options.MetricsRecorder.Observe(ctx, parsed)
 				}
 
 				if !yield(parsed, nil) {
@@ -519,17 +508,21 @@ func QueryStream(
 		log := getLoggerWithComponent(options, "query_stream")
 		log.Debug("starting streaming query execution")
 
-		recorder := newRecorder(options)
-		queryStart := time.Now()
-
-		var querySpan trace.Span
-
-		ctx, querySpan = recorder.StartQuerySpan(ctx, "query_stream", options.Model)
+		// Initialize OTel metrics recorder from providers if configured.
+		initMetricsRecorder(options)
 
 		var queryErr error
 
+		var querySpan trace.Span
+
+		ctx, querySpan = startQuerySpan(ctx, options, "query_stream")
+
 		defer func() {
-			recorder.EndQuerySpan(ctx, querySpan, "query_stream", options.Model, time.Since(queryStart), queryErr)
+			if queryErr != nil {
+				querySpan.SetStatus(1, queryErr.Error()) // codes.Error = 1
+			}
+
+			querySpan.End()
 		}()
 
 		// QueryStream uses app-server semantics unless a custom transport is injected.
@@ -576,7 +569,7 @@ func QueryStream(
 
 		defer controller.Stop()
 
-		session := protocol.NewSession(log, controller, options, recorder)
+		session := protocol.NewSession(log, controller, options)
 		session.RegisterMCPServers()
 		session.RegisterDynamicTools()
 		session.RegisterHandlers()
@@ -637,7 +630,7 @@ func QueryStream(
 
 		log.Debug("reading messages from controller")
 
-		queryErr = streamReceiveLoop(ctx, log, recorder, controller, options, "query_stream",
+		queryErr = streamReceiveLoop(ctx, log, controller, options,
 			rawMessages, gCtx, g, closeResult, hasMCPOrHooks, yield)
 	}
 }
@@ -647,10 +640,8 @@ func QueryStream(
 func streamReceiveLoop(
 	ctx context.Context,
 	log *slog.Logger,
-	recorder *observability.Recorder,
 	controller *protocol.Controller,
 	options *CodexAgentOptions,
-	operationName string,
 	rawMessages <-chan map[string]any,
 	gCtx context.Context,
 	g *errgroup.Group,
@@ -681,7 +672,6 @@ func streamReceiveLoop(
 
 			if err != nil {
 				log.Warn("failed to parse message", "error", err)
-				recorder.RecordMessageParseError(ctx)
 
 				fmtErr := fmt.Errorf("parse message: %w", err)
 				if !yield(nil, fmtErr) {
@@ -697,13 +687,8 @@ func streamReceiveLoop(
 				}
 			}
 
-			if resultMsg, ok := parsed.(*message.ResultMessage); ok {
-				if resultMsg.Usage != nil {
-					recorder.RecordTokenUsage(ctx, operationName, options.Model,
-						int64(resultMsg.Usage.InputTokens),
-						int64(resultMsg.Usage.OutputTokens),
-					)
-				}
+			if options.MetricsRecorder != nil {
+				options.MetricsRecorder.Observe(ctx, parsed)
 			}
 
 			if !yield(parsed, nil) {

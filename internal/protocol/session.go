@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"go.opentelemetry.io/otel/trace"
+	agenttracer "github.com/ethpandaops/agent-sdk-observability/tracer"
 
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/elicitation"
@@ -37,7 +37,6 @@ type Session struct {
 	log        *slog.Logger
 	controller *Controller
 	options    *config.Options
-	recorder   *observability.Recorder
 
 	sdkMcpServers   map[string]mcp.ServerInstance
 	sdkDynamicTools map[string]*config.DynamicTool
@@ -47,25 +46,27 @@ type Session struct {
 }
 
 // NewSession creates a new Session for protocol handling.
-// If recorder is nil, a noop recorder is used.
 func NewSession(
 	log *slog.Logger,
 	controller *Controller,
 	options *config.Options,
-	recorder *observability.Recorder,
 ) *Session {
-	if recorder == nil {
-		recorder = observability.NopRecorder()
-	}
-
 	return &Session{
 		log:             log.With("component", "session"),
 		controller:      controller,
 		options:         options,
-		recorder:        recorder,
 		sdkMcpServers:   make(map[string]mcp.ServerInstance, 4),
 		sdkDynamicTools: make(map[string]*config.DynamicTool, 4),
 	}
+}
+
+// observer returns the Observer from options, or nil if unconfigured.
+func (s *Session) observer() *observability.Observer {
+	if s.options == nil {
+		return nil
+	}
+
+	return s.options.Observer
 }
 
 // RegisterHandlers registers protocol handlers for MCP tool calls and
@@ -490,9 +491,24 @@ func (s *Session) HandleDynamicToolCall(
 
 	callStart := time.Now()
 
-	var toolSpan trace.Span
+	var toolSpan *agenttracer.Span
 
-	ctx, toolSpan = s.recorder.StartToolCallSpan(ctx, toolFullName)
+	obs := s.observer()
+	if obs != nil {
+		ctx, toolSpan = obs.StartToolSpan(ctx, toolFullName, "")
+	}
+
+	endToolSpan := func(outcome string) {
+		if obs != nil {
+			obs.RecordToolCallDuration(ctx, time.Since(callStart).Seconds(), toolFullName)
+			obs.RecordToolCall(ctx, toolFullName, outcome)
+
+			if toolSpan != nil {
+				toolSpan.SetAttributes(observability.Outcome(outcome))
+				toolSpan.End()
+			}
+		}
+	}
 
 	// Try plain name lookup in dynamic tools first.
 	if tool, ok := s.sdkDynamicTools[toolFullName]; ok {
@@ -503,7 +519,7 @@ func (s *Session) HandleDynamicToolCall(
 			outcome = outcomeError
 		}
 
-		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcome, time.Since(callStart))
+		endToolSpan(outcome)
 
 		return result, err
 	}
@@ -511,7 +527,7 @@ func (s *Session) HandleDynamicToolCall(
 	// Fall back to MCP server lookup for mcp__<server>__<tool> names.
 	serverName, toolName, err := parseMCPToolName(toolFullName)
 	if err != nil {
-		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcomeError, time.Since(callStart))
+		endToolSpan(outcomeError)
 
 		//nolint:nilerr // Error is encoded in the protocol response
 		return map[string]any{
@@ -525,7 +541,7 @@ func (s *Session) HandleDynamicToolCall(
 
 	server, exists := s.sdkMcpServers[serverName]
 	if !exists {
-		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcomeError, time.Since(callStart))
+		endToolSpan(outcomeError)
 
 		return map[string]any{
 			"success": false,
@@ -538,7 +554,7 @@ func (s *Session) HandleDynamicToolCall(
 
 	result, callErr := server.CallTool(ctx, toolName, arguments)
 	if callErr != nil {
-		s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcomeError, time.Since(callStart))
+		endToolSpan(outcomeError)
 
 		//nolint:nilerr // Error is encoded in the protocol response
 		return map[string]any{
@@ -557,7 +573,7 @@ func (s *Session) HandleDynamicToolCall(
 		outcome = outcomeError
 	}
 
-	s.recorder.EndToolCallSpan(ctx, toolSpan, toolFullName, outcome, time.Since(callStart))
+	endToolSpan(outcome)
 
 	contentItems := convertMCPContentToItems(result)
 
@@ -895,7 +911,9 @@ func (s *Session) HandleCanUseTool(
 	case *permission.ResultDeny:
 		// Record the denied tool call so dashboards can distinguish
 		// denials from errors.
-		s.recorder.RecordToolCallDenied(ctx, toolName)
+		if obs := s.observer(); obs != nil {
+			obs.RecordToolCall(ctx, toolName, "denied")
+		}
 
 		return map[string]any{
 			"decision": "decline",

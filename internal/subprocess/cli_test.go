@@ -70,7 +70,7 @@ func TestStart_IgnoredGetwdError(t *testing.T) {
 	// Now try to create a transport with empty Cwd (will trigger os.Getwd() fallback)
 	transport := NewCLITransport(log, "test", &config.Options{
 		Cwd: "", // Empty - should trigger os.Getwd() fallback
-	}, nil)
+	})
 
 	ctx := context.Background()
 	startErr := transport.Start(ctx)
@@ -97,7 +97,7 @@ func TestConnect_WithNonexistentCwd(t *testing.T) {
 
 	transport := NewCLITransport(log, "test", &config.Options{
 		Cwd: "/nonexistent/path/that/does/not/exist",
-	}, nil)
+	})
 
 	ctx := context.Background()
 	err := transport.Start(ctx)

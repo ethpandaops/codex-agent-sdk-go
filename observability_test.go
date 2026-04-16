@@ -162,10 +162,11 @@ func (t *otelResultTransport) SendMessage(
 	if t.sentResult.CompareAndSwap(false, true) {
 		go func() {
 			t.msgChan <- map[string]any{
-				"type":       "result",
-				"subtype":    "success",
-				"is_error":   false,
-				"session_id": "session-otel-test",
+				"type":        "result",
+				"subtype":     "success",
+				"is_error":    false,
+				"session_id":  "session-otel-test",
+				"duration_ms": float64(1500),
 				"usage": map[string]any{
 					"input_tokens":  float64(100),
 					"output_tokens": float64(50),
@@ -198,10 +199,11 @@ func (t *otelResultTransport) EndInput() error {
 	if t.sentResult.CompareAndSwap(false, true) {
 		go func() {
 			t.msgChan <- map[string]any{
-				"type":       "result",
-				"subtype":    "success",
-				"is_error":   false,
-				"session_id": "session-otel-test",
+				"type":        "result",
+				"subtype":     "success",
+				"is_error":    false,
+				"session_id":  "session-otel-test",
+				"duration_ms": float64(1500),
 				"usage": map[string]any{
 					"input_tokens":  float64(100),
 					"output_tokens": float64(50),
@@ -335,14 +337,14 @@ func TestQuery_CreatesSpan(t *testing.T) {
 	found := false
 
 	for _, span := range spans {
-		if span.Name == "codex.query" {
+		if span.Name == "chat" {
 			found = true
 
 			break
 		}
 	}
 
-	require.True(t, found, "expected codex.query span")
+	require.True(t, found, "expected chat span")
 }
 
 // TestQuery_NoProviders_NoPanic verifies that Query works correctly

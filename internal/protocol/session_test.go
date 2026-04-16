@@ -104,7 +104,7 @@ func TestSession_RegisterDynamicTools(t *testing.T) {
 		},
 	}
 
-	session := NewSession(log, nil, &config.Options{SDKTools: tools}, nil)
+	session := NewSession(log, nil, &config.Options{SDKTools: tools})
 	session.RegisterDynamicTools()
 
 	require.Len(t, session.sdkDynamicTools, 2)
@@ -166,7 +166,7 @@ func TestSession_HandleDynamicToolCall_PlainName(t *testing.T) {
 
 	var calledWith map[string]any
 
-	session := NewSession(log, nil, &config.Options{}, nil)
+	session := NewSession(log, nil, &config.Options{})
 	session.sdkDynamicTools["add"] = &config.DynamicTool{
 		Name: "add",
 		Handler: func(_ context.Context, input map[string]any) (map[string]any, error) {
@@ -197,7 +197,7 @@ func TestSession_HandleDynamicToolCall_PlainName(t *testing.T) {
 func TestSession_HandleDynamicToolCall_FallbackMCP(t *testing.T) {
 	log := slog.Default()
 
-	session := NewSession(log, nil, &config.Options{}, nil)
+	session := NewSession(log, nil, &config.Options{})
 	// No dynamic tools registered, but we have an MCP server
 	// The MCP fallback should try to parse the name and fail
 	// since no MCP server is registered.
@@ -221,7 +221,7 @@ func TestSession_HandleDynamicToolCall_FallbackMCP(t *testing.T) {
 func TestSession_HandleDynamicToolCall_UnknownTool(t *testing.T) {
 	log := slog.Default()
 
-	session := NewSession(log, nil, &config.Options{}, nil)
+	session := NewSession(log, nil, &config.Options{})
 
 	resp, err := session.HandleDynamicToolCall(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -247,7 +247,7 @@ func TestSession_HandleCanUseTool_PublicSDKMCPNameAllowed(t *testing.T) {
 	}
 	require.NoError(t, config.ConfigureToolPermissionPolicy(opts))
 
-	session := NewSession(log, nil, opts, nil)
+	session := NewSession(log, nil, opts)
 	session.sdkMcpServers["calc"] = &testSDKMCPServer{name: "calc"}
 
 	resp, err := session.HandleCanUseTool(context.Background(), &ControlRequest{
@@ -272,7 +272,7 @@ func TestSession_HandleCanUseTool_PlainDynamicSDKMCPPrefixPreserved(t *testing.T
 	}
 	require.NoError(t, config.ConfigureToolPermissionPolicy(opts))
 
-	session := NewSession(log, nil, opts, nil)
+	session := NewSession(log, nil, opts)
 
 	resp, err := session.HandleCanUseTool(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -424,7 +424,7 @@ func TestSession_InitializationResult_ConcurrentReadWrite(t *testing.T) {
 func TestSession_HandleRequestUserInput_NoCallback(t *testing.T) {
 	log := slog.Default()
 
-	session := NewSession(log, nil, &config.Options{}, nil)
+	session := NewSession(log, nil, &config.Options{})
 
 	resp, err := session.HandleRequestUserInput(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -466,7 +466,7 @@ func TestSession_HandleRequestUserInput_WithCallback(t *testing.T) {
 
 			return &userinput.Response{Answers: answers}, nil
 		},
-	}, nil)
+	})
 
 	resp, err := session.HandleRequestUserInput(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -526,7 +526,7 @@ func TestSession_HandleRequestUserInput_FreeText(t *testing.T) {
 
 			return &userinput.Response{Answers: answers}, nil
 		},
-	}, nil)
+	})
 
 	resp, err := session.HandleRequestUserInput(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -614,7 +614,7 @@ func TestSession_BuildInitializePayload_DeveloperInstructions(t *testing.T) {
 }
 
 func TestSession_HandleFileChangeApproval_NoCallback(t *testing.T) {
-	session := NewSession(slog.Default(), nil, &config.Options{}, nil)
+	session := NewSession(slog.Default(), nil, &config.Options{})
 
 	resp, err := session.HandleFileChangeApproval(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -644,7 +644,7 @@ func TestSession_HandleFileChangeApproval_WithCallback(t *testing.T) {
 		},
 	}
 
-	session := NewSession(slog.Default(), nil, opts, nil)
+	session := NewSession(slog.Default(), nil, opts)
 
 	resp, err := session.HandleFileChangeApproval(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -671,7 +671,7 @@ func TestSession_HandleFileChangeApproval_AllowedWritePolicyAcceptsEditApproval(
 	}
 	require.NoError(t, config.ConfigureToolPermissionPolicy(opts))
 
-	session := NewSession(slog.Default(), nil, opts, nil)
+	session := NewSession(slog.Default(), nil, opts)
 
 	resp, err := session.HandleFileChangeApproval(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -695,7 +695,7 @@ func TestSession_HandleFileChangeApproval_LegacyApplyPatchUsesWriteForAdds(t *te
 		},
 	}
 
-	session := NewSession(slog.Default(), nil, opts, nil)
+	session := NewSession(slog.Default(), nil, opts)
 
 	resp, err := session.HandleFileChangeApproval(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -715,7 +715,7 @@ func TestSession_HandleFileChangeApproval_LegacyApplyPatchUsesWriteForAdds(t *te
 }
 
 func TestSession_HandlePermissionsApproval_NoCallback(t *testing.T) {
-	session := NewSession(slog.Default(), nil, &config.Options{}, nil)
+	session := NewSession(slog.Default(), nil, &config.Options{})
 
 	reqPerms := map[string]any{
 		"fileSystem": map[string]any{"write": []any{"/tmp"}},
@@ -751,7 +751,7 @@ func TestSession_HandlePermissionsApproval_WithCallback(t *testing.T) {
 		},
 	}
 
-	session := NewSession(slog.Default(), nil, opts, nil)
+	session := NewSession(slog.Default(), nil, opts)
 
 	reqPerms := map[string]any{
 		"network": map[string]any{"enabled": true},
@@ -782,7 +782,7 @@ func TestSession_HandlePermissionsApproval_AllowedWritePolicyBypassesFilter(t *t
 	}
 	require.NoError(t, config.ConfigureToolPermissionPolicy(opts))
 
-	session := NewSession(slog.Default(), nil, opts, nil)
+	session := NewSession(slog.Default(), nil, opts)
 
 	reqPerms := map[string]any{
 		"fileSystem": map[string]any{"write": []any{"/tmp"}},
@@ -801,7 +801,7 @@ func TestSession_HandlePermissionsApproval_AllowedWritePolicyBypassesFilter(t *t
 }
 
 func TestSession_HandleMCPElicitation_NoCallback(t *testing.T) {
-	session := NewSession(slog.Default(), nil, &config.Options{}, nil)
+	session := NewSession(slog.Default(), nil, &config.Options{})
 
 	resp, err := session.HandleMCPElicitation(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -827,7 +827,7 @@ func TestSession_HandleMCPElicitation_WithCallback(t *testing.T) {
 		},
 	}
 
-	session := NewSession(slog.Default(), nil, opts, nil)
+	session := NewSession(slog.Default(), nil, opts)
 
 	resp, err := session.HandleMCPElicitation(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -881,7 +881,7 @@ func TestSession_HandleMCPElicitation_URLMode(t *testing.T) {
 		},
 	}
 
-	session := NewSession(slog.Default(), nil, opts, nil)
+	session := NewSession(slog.Default(), nil, opts)
 
 	resp, err := session.HandleMCPElicitation(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -906,7 +906,7 @@ func TestSession_HandleMCPElicitation_NilResponse(t *testing.T) {
 		},
 	}
 
-	session := NewSession(slog.Default(), nil, opts, nil)
+	session := NewSession(slog.Default(), nil, opts)
 
 	resp, err := session.HandleMCPElicitation(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -936,7 +936,7 @@ func TestSession_HandleCanUseTool_LegacyExecCommandApprovalArray(t *testing.T) {
 		},
 	}
 
-	session := NewSession(slog.Default(), nil, opts, nil)
+	session := NewSession(slog.Default(), nil, opts)
 
 	resp, err := session.HandleCanUseTool(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -958,7 +958,7 @@ func TestSession_HandleChatGPTAuthTokensRefresh_UsesExternalAuthEnv(t *testing.T
 	t.Setenv("CODEX_CHATGPT_ACCOUNT_ID", "acct-123")
 	t.Setenv("CODEX_CHATGPT_PLAN_TYPE", "plus")
 
-	session := NewSession(slog.Default(), nil, &config.Options{}, nil)
+	session := NewSession(slog.Default(), nil, &config.Options{})
 
 	resp, err := session.HandleChatGPTAuthTokensRefresh(context.Background(), &ControlRequest{
 		Request: map[string]any{
@@ -973,7 +973,7 @@ func TestSession_HandleChatGPTAuthTokensRefresh_UsesExternalAuthEnv(t *testing.T
 }
 
 func TestSession_HandleChatGPTAuthTokensRefresh_MissingEnvErrors(t *testing.T) {
-	session := NewSession(slog.Default(), nil, &config.Options{}, nil)
+	session := NewSession(slog.Default(), nil, &config.Options{})
 
 	_, err := session.HandleChatGPTAuthTokensRefresh(context.Background(), &ControlRequest{
 		Request: map[string]any{

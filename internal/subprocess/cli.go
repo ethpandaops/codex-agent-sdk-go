@@ -18,7 +18,6 @@ import (
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/errors"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
-	"github.com/ethpandaops/codex-agent-sdk-go/internal/observability"
 )
 
 const (
@@ -42,7 +41,6 @@ type CLITransport struct {
 	stdout         io.ReadCloser
 	stderr         io.ReadCloser
 	stderrCallback func(string)
-	recorder       *observability.Recorder
 	mu             sync.Mutex
 	isStreaming    bool
 	closing        bool
@@ -55,14 +53,12 @@ type CLITransport struct {
 var _ config.Transport = (*CLITransport)(nil)
 
 // NewCLITransport creates a new CLI transport for one-shot exec mode.
-// If recorder is nil, a noop recorder is used.
 func NewCLITransport(
 	log *slog.Logger,
 	prompt string,
 	options *config.Options,
-	recorder *observability.Recorder,
 ) *CLITransport {
-	return NewCLITransportWithMode(log, prompt, options, false, recorder)
+	return NewCLITransportWithMode(log, prompt, options, false)
 }
 
 // NewCLITransportWithMode creates a new CLI transport with explicit mode control.
@@ -70,24 +66,17 @@ func NewCLITransport(
 // When isStreaming is true, the transport spawns `codex app-server` and keeps
 // stdin open for bidirectional JSON-RPC. When false, it spawns `codex exec`
 // for one-shot queries.
-// If recorder is nil, a noop recorder is used.
 func NewCLITransportWithMode(
 	log *slog.Logger,
 	prompt string,
 	options *config.Options,
 	isStreaming bool,
-	recorder *observability.Recorder,
 ) *CLITransport {
-	if recorder == nil {
-		recorder = observability.NopRecorder()
-	}
-
 	return &CLITransport{
 		log:            log.With("component", "cli_transport"),
 		options:        options,
 		prompt:         prompt,
 		stderrCallback: options.Stderr,
-		recorder:       recorder,
 		isStreaming:    isStreaming,
 		closeCh:        make(chan struct{}),
 	}
@@ -273,7 +262,6 @@ func (t *CLITransport) ReadMessages(
 
 			if err := json.Unmarshal(line, &msg); err != nil {
 				t.log.Debug("Failed to unmarshal JSON message", "error", err, "message", string(line))
-				t.recorder.RecordMessageParseError(ctx)
 
 				errs <- &errors.CLIJSONDecodeError{
 					RawData: string(line),
@@ -337,7 +325,6 @@ func (t *CLITransport) ReadMessages(
 			}
 
 			t.log.Error("CLI process exited with error", "exit_code", exitCode, "stderr", stderrOutput)
-			t.recorder.RecordCLIProcessFailure(ctx)
 
 			errs <- &errors.ProcessError{
 				ExitCode: exitCode,

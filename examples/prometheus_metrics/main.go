@@ -44,15 +44,16 @@ func main() {
 	// When WithPrometheusRegisterer is set (and WithMeterProvider is not),
 	// the SDK automatically creates an OTel MeterProvider from the registerer.
 	//
-	// The SDK records:
-	//   - gen_ai.client.operation.duration (histogram)
-	//   - gen_ai.client.token.usage (counter)
-	//   - codex.tool_calls_total (counter)
-	//   - codex.tool_call_duration_seconds (histogram)
-	//   - codex.cli_process_failures_total (counter)
-	//   - codex.cli_message_parse_errors_total (counter)
-	//   - One span per Query/QueryStream call
-	//   - Child spans per tool invocation
+	// The SDK records (via OpenTelemetry):
+	//   - gen_ai.client.operation.duration (histogram, GenAI semconv)
+	//   - gen_ai.client.token.usage (histogram, GenAI semconv)
+	//   - gen_ai.client.operation.time_to_first_chunk (histogram, TTFT)
+	//   - gen_ai.client.cost_usd_total (counter, USD cost)
+	//   - codex.tool_calls_total (counter, per tool name + outcome)
+	//   - codex.tool_call_duration (histogram, per tool)
+	//   - codex.hook_dispatch_duration (histogram, per hook event)
+	//   - One span per Query/QueryStream call (GenAI "chat" span)
+	//   - Child spans per tool invocation (GenAI "execute_tool" span)
 	for msg, err := range codexsdk.Query(ctx, codexsdk.Text("What is 2 + 2?"),
 		codexsdk.WithLogger(logger),
 		codexsdk.WithPrometheusRegisterer(reg),
