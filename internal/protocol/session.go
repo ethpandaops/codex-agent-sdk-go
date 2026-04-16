@@ -12,10 +12,13 @@ import (
 	"sync"
 	"time"
 
+	agenttracer "github.com/ethpandaops/agent-sdk-observability/tracer"
+
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/elicitation"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/observability"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/permission"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/schema"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/userinput"
@@ -24,6 +27,9 @@ import (
 const (
 	// defaultInitializeTimeout is the default timeout for initialize control requests.
 	defaultInitializeTimeout = 60 * time.Second
+
+	// outcomeError is the tool call outcome value for failed invocations.
+	outcomeError = "error"
 )
 
 // Session encapsulates protocol handling logic for MCP servers and callbacks.
@@ -52,6 +58,15 @@ func NewSession(
 		sdkMcpServers:   make(map[string]mcp.ServerInstance, 4),
 		sdkDynamicTools: make(map[string]*config.DynamicTool, 4),
 	}
+}
+
+// observer returns the Observer from options, or nil if unconfigured.
+func (s *Session) observer() *observability.Observer {
+	if s.options == nil {
+		return nil
+	}
+
+	return s.options.Observer
 }
 
 // RegisterHandlers registers protocol handlers for MCP tool calls and
@@ -474,14 +489,46 @@ func (s *Session) HandleDynamicToolCall(
 	toolFullName, _ := req.Request["tool"].(string)
 	arguments, _ := req.Request["arguments"].(map[string]any)
 
+	callStart := time.Now()
+
+	var toolSpan *agenttracer.Span
+
+	obs := s.observer()
+	if obs != nil {
+		ctx, toolSpan = obs.StartToolSpan(ctx, toolFullName, "")
+	}
+
+	endToolSpan := func(outcome string) {
+		if obs != nil {
+			obs.RecordToolCallDuration(ctx, time.Since(callStart).Seconds(), toolFullName)
+			obs.RecordToolCall(ctx, toolFullName, outcome)
+
+			if toolSpan != nil {
+				toolSpan.SetAttributes(observability.Outcome(outcome))
+				toolSpan.End()
+			}
+		}
+	}
+
 	// Try plain name lookup in dynamic tools first.
 	if tool, ok := s.sdkDynamicTools[toolFullName]; ok {
-		return s.executeDynamicTool(ctx, tool, arguments)
+		result, err := s.executeDynamicTool(ctx, tool, arguments)
+
+		outcome := "ok"
+		if err != nil || (result != nil && result["success"] == false) {
+			outcome = outcomeError
+		}
+
+		endToolSpan(outcome)
+
+		return result, err
 	}
 
 	// Fall back to MCP server lookup for mcp__<server>__<tool> names.
 	serverName, toolName, err := parseMCPToolName(toolFullName)
 	if err != nil {
+		endToolSpan(outcomeError)
+
 		//nolint:nilerr // Error is encoded in the protocol response
 		return map[string]any{
 			"success": false,
@@ -494,6 +541,8 @@ func (s *Session) HandleDynamicToolCall(
 
 	server, exists := s.sdkMcpServers[serverName]
 	if !exists {
+		endToolSpan(outcomeError)
+
 		return map[string]any{
 			"success": false,
 			"contentItems": []map[string]any{{
@@ -505,6 +554,8 @@ func (s *Session) HandleDynamicToolCall(
 
 	result, callErr := server.CallTool(ctx, toolName, arguments)
 	if callErr != nil {
+		endToolSpan(outcomeError)
+
 		//nolint:nilerr // Error is encoded in the protocol response
 		return map[string]any{
 			"success": false,
@@ -516,6 +567,13 @@ func (s *Session) HandleDynamicToolCall(
 	}
 
 	isError, _ := result["is_error"].(bool)
+
+	outcome := "ok"
+	if isError {
+		outcome = outcomeError
+	}
+
+	endToolSpan(outcome)
 
 	contentItems := convertMCPContentToItems(result)
 
@@ -851,6 +909,12 @@ func (s *Session) HandleCanUseTool(
 		}, nil
 
 	case *permission.ResultDeny:
+		// Record the denied tool call so dashboards can distinguish
+		// denials from errors.
+		if obs := s.observer(); obs != nil {
+			obs.RecordToolCall(ctx, toolName, "denied")
+		}
+
 		return map[string]any{
 			"decision": "decline",
 		}, nil

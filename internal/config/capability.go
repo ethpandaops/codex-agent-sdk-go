@@ -117,6 +117,26 @@ var optionCapabilities = []OptionCapability{
 		Field: "CodexHome", OptionName: "WithCodexHome", Exec: SupportSupported,
 		AppServer: SupportSupported, Notes: "only used by StatSession, no-op for Query/Client",
 	},
+	{
+		Field: "MeterProvider", OptionName: "WithMeterProvider", Exec: SupportSupported,
+		AppServer: SupportSupported, Notes: "SDK-local observability, no CLI interaction",
+	},
+	{
+		Field: "TracerProvider", OptionName: "WithTracerProvider", Exec: SupportSupported,
+		AppServer: SupportSupported, Notes: "SDK-local observability, no CLI interaction",
+	},
+	{
+		Field: "PrometheusRegisterer", OptionName: "WithPrometheusRegisterer", Exec: SupportSupported,
+		AppServer: SupportSupported, Notes: "SDK-local observability, creates MeterProvider from Prometheus registry",
+	},
+	{
+		Field: "MetricsRecorder", OptionName: "initMetricsRecorder", Exec: SupportSupported,
+		AppServer: SupportSupported, Notes: "SDK-internal, set at runtime by initMetricsRecorder",
+	},
+	{
+		Field: "Observer", OptionName: "initMetricsRecorder", Exec: SupportSupported,
+		AppServer: SupportSupported, Notes: "SDK-internal, set at runtime alongside MetricsRecorder",
+	},
 }
 
 var optionCapabilityByField = func() map[string]OptionCapability {
@@ -188,6 +208,9 @@ func EnabledOptionFields(opts *Options) map[string]bool {
 	set("SkipVersionCheck", opts.SkipVersionCheck)
 	set("IncludePartialMessages", opts.IncludePartialMessages)
 	set("CodexHome", opts.CodexHome != "")
+	set("MeterProvider", opts.MeterProvider != nil)
+	set("TracerProvider", opts.TracerProvider != nil)
+	set("PrometheusRegisterer", opts.PrometheusRegisterer != nil)
 
 	return enabled
 }

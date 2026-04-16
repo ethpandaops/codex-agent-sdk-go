@@ -4,6 +4,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/config"
 )
 
@@ -396,5 +400,34 @@ func WithIncludePartialMessages(include bool) Option {
 func WithCodexHome(path string) Option {
 	return func(o *CodexAgentOptions) {
 		o.CodexHome = path
+	}
+}
+
+// ===== Observability =====
+
+// WithMeterProvider sets the OTel meter provider for recording SDK metrics.
+// When not set, all metric recording is noop (zero-cost).
+// The SDK depends on the OTel API only — callers supply their own MeterProvider.
+func WithMeterProvider(mp metric.MeterProvider) Option {
+	return func(o *CodexAgentOptions) {
+		o.MeterProvider = mp
+	}
+}
+
+// WithTracerProvider sets the OTel tracer provider for recording SDK spans.
+// When not set, all trace recording is noop (zero-cost).
+func WithTracerProvider(tp trace.TracerProvider) Option {
+	return func(o *CodexAgentOptions) {
+		o.TracerProvider = tp
+	}
+}
+
+// WithPrometheusRegisterer configures a Prometheus registerer for SDK metrics.
+// This is sugar: when set and WithMeterProvider is not, an OTel MeterProvider
+// is created automatically from the registerer via the OTel→Prometheus bridge.
+// If WithMeterProvider is also set, WithMeterProvider takes precedence.
+func WithPrometheusRegisterer(reg prometheus.Registerer) Option {
+	return func(o *CodexAgentOptions) {
+		o.PrometheusRegisterer = reg
 	}
 }

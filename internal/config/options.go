@@ -5,12 +5,31 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/elicitation"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/hook"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/mcp"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/message"
+	"github.com/ethpandaops/codex-agent-sdk-go/internal/observability"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/permission"
 	"github.com/ethpandaops/codex-agent-sdk-go/internal/userinput"
 )
+
+// SessionMetricsRecorder is the narrow observability interface used by the SDK runtime.
+// The otelRecorder in the root package implements this, keeping the internal layer
+// decoupled from the specific recorder implementation.
+type SessionMetricsRecorder interface {
+	Observe(ctx context.Context, msg message.Message)
+}
+
+// QueryLifecycleNotifier is optionally implemented by SessionMetricsRecorder
+// to receive query lifecycle events (e.g., TTFT start time).
+type QueryLifecycleNotifier interface {
+	MarkQueryStart()
+}
 
 // DynamicTool defines a tool registered via the dynamicTools API.
 // The Codex CLI discovers these tools at thread/start and calls them back
@@ -209,4 +228,30 @@ type Options struct {
 	// CodexHome overrides the Codex home directory (default ~/.codex).
 	// Used by StatSession to locate the session database.
 	CodexHome string
+
+	// ===== Observability =====
+
+	// MeterProvider is the OTel meter provider for recording SDK metrics.
+	// When nil, all metric recording is noop (zero-cost).
+	MeterProvider metric.MeterProvider
+
+	// TracerProvider is the OTel tracer provider for recording SDK spans.
+	// When nil, all trace recording is noop (zero-cost).
+	TracerProvider trace.TracerProvider
+
+	// PrometheusRegisterer provides a Prometheus registerer for SDK metrics.
+	// This is sugar: when set and MeterProvider is nil, an OTel MeterProvider
+	// is created automatically from the registerer via the OTel→Prometheus bridge.
+	// If MeterProvider is also set, MeterProvider takes precedence.
+	PrometheusRegisterer prometheus.Registerer
+
+	// MetricsRecorder is the internal observability recorder created from OTel providers.
+	// This field is set by the SDK at runtime; users should not set it directly.
+	MetricsRecorder SessionMetricsRecorder `json:"-"`
+
+	// Observer is the shared observability helper used for SDK-level span and
+	// duration instrumentation beyond message-based recording (hook dispatch,
+	// explicit tool spans, etc.). Set by the SDK at runtime alongside
+	// MetricsRecorder; consumers should not set this directly.
+	Observer *observability.Observer `json:"-"`
 }

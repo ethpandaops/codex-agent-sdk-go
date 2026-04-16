@@ -53,7 +53,7 @@ func TestSessionRegisterHandlers_CoversCurrentCodexServerRequests(t *testing.T) 
 	serverRequestJSON := readSchemaFile(t, schemaDir, "ServerRequest.json")
 
 	controller := NewController(slog.Default(), newMockTransport())
-	session := NewSession(slog.Default(), controller, &config.Options{})
+	session := NewSession(slog.Default(), controller, &config.Options{}, nil)
 	session.RegisterHandlers()
 
 	liveMethods := []string{
