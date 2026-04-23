@@ -984,6 +984,10 @@ var officialModelSpecs = map[string]modelSpec{
 		ContextWindow:   1050000,
 		MaxOutputTokens: 128000,
 	},
+	"gpt-5.5": {
+		ContextWindow:   1050000,
+		MaxOutputTokens: 128000,
+	},
 }
 
 var runtimeModelSpecs = map[string]modelSpec{
@@ -1065,7 +1069,7 @@ func (a *AppServerAdapter) listAllModels(ctx context.Context) (*modelListResult,
 
 // defaultModelID is the model marked as default when the API does
 // not flag any model with isDefault.
-const defaultModelID = "gpt-5.3-codex"
+const defaultModelID = "gpt-5.5"
 
 // ensureDefaultModel sets isDefault on the preferred model when no
 // model in the list has isDefault set to true.
