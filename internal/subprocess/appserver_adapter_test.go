@@ -3111,12 +3111,12 @@ func TestTranslateNotification_ErrorMethod(t *testing.T) {
 func TestEnsureDefaultModel(t *testing.T) {
 	t.Parallel()
 
-	t.Run("no default set picks gpt-5.3-codex", func(t *testing.T) {
+	t.Run("no default set picks gpt-5.5", func(t *testing.T) {
 		t.Parallel()
 
 		models := []map[string]any{
 			{"id": "gpt-4.1-mini"},
-			{"id": "gpt-5.3-codex"},
+			{"id": "gpt-5.5"},
 			{"id": "o3-pro"},
 		}
 
