@@ -5,16 +5,16 @@ go 1.26.0
 require (
 	github.com/ethpandaops/agent-sdk-observability v0.0.1
 	github.com/glebarez/go-sqlite v1.22.0
-	github.com/google/jsonschema-go v0.4.2
+	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
-	github.com/modelcontextprotocol/go-sdk v1.4.1
+	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
-	go.opentelemetry.io/otel v1.43.0
-	go.opentelemetry.io/otel/metric v1.43.0
-	go.opentelemetry.io/otel/sdk v1.43.0
-	go.opentelemetry.io/otel/sdk/metric v1.43.0
-	go.opentelemetry.io/otel/trace v1.43.0
+	go.opentelemetry.io/otel v1.44.0
+	go.opentelemetry.io/otel/metric v1.44.0
+	go.opentelemetry.io/otel/sdk v1.44.0
+	go.opentelemetry.io/otel/sdk/metric v1.44.0
+	go.opentelemetry.io/otel/trace v1.44.0
 	golang.org/x/sync v0.20.0
 )
 
@@ -41,7 +41,7 @@ require (
 	go.opentelemetry.io/otel/exporters/prometheus v0.65.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
